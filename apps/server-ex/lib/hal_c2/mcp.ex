@@ -625,9 +625,22 @@ defmodule HalC2.Mcp do
         %{"content" => content, "structuredContent" => value}
 
       {:error, code, message} ->
-        failure = %{"_tag" => "OrchestratorMcpFailure", "code" => code, "message" => message}
-        %{"content" => [%{"type" => "text", "text" => JSON.encode!(failure)}], "isError" => true}
+        failure_result(code, message)
+
+      {:error, code, message, extra} ->
+        failure_result(code, message, extra)
     end
+  end
+
+  @doc """
+  A failed tool call as an MCP result: an `OrchestratorMcpFailure` with `code` and
+  `message`, and what `extra` adds (a plugin tool's `plugin` and `details`).
+  """
+  def failure_result(code, message, extra \\ %{}) do
+    failure =
+      Map.merge(extra, %{"_tag" => "OrchestratorMcpFailure", "code" => code, "message" => message})
+
+    %{"content" => [%{"type" => "text", "text" => JSON.encode!(failure)}], "isError" => true}
   end
 
   # A Claude subagent shares its thread's credential, so its calls arrive as the

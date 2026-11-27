@@ -279,6 +279,318 @@ defmodule HalC2.Steps.SourceControl.CommitAndGeneratedMessages do
     context
   end
 
+  # --- text conversion, locks and writer answers ----------------------------------------
+
+  step "a git text converter configured for {string} fails", %{args: [path]} = context do
+    # In .git/info, so the attribute itself is not part of the commit.
+    File.write!(Path.join(context.cwd, ".git/info/attributes"), "#{path} diff=failing\n")
+    World.git!(context.cwd, ["config", "diff.failing.textconv", "false"])
+    context
+  end
+
+  step "the index of {string} cannot be rewritten", %{args: [_project]} = context do
+    # Stage the left-out file first, so only the reset would unstage it; then make
+    # .git unwritable. No index.lock exists, so the lock check passes and the
+    # reset itself is what fails (it cannot create its lock).
+    World.git!(context.cwd, ["add", "--", "src/tax.ts"])
+    dot_git = Path.join(context.cwd, ".git")
+    File.chmod!(dot_git, 0o555)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dot_git, 0o755) end)
+    context
+  end
+
+  step "the commit fails with the error of resetting the index", context do
+    assert World.failure(context) =~ "git reset failed"
+    context
+  end
+
+  step "{string} is still staged", %{args: [path]} = context do
+    assert World.git!(context.cwd, ~w(diff --cached --name-only)) =~ path
+    context
+  end
+
+  step "the repository's CLAUDE.md holds the same text as its AGENTS.md", context do
+    World.commit!(
+      context.cwd,
+      %{"AGENTS.md" => "Mention the ticket number.\n"},
+      "Add agent notes"
+    )
+
+    context
+  end
+
+  step "the writer model sees the conventions once", context do
+    assert [prompt | _] = Shared.writer_prompts(context)
+    assert length(String.split(prompt, "Mention the ticket number.")) - 1 == 1
+    context
+  end
+
+  step "the writer model answers the pull request title with nothing", context do
+    World.put_env("FAKE_TEXT_ANSWER", ~s({"title":""}))
+    commit(context, %{"action" => "commit_push_pr"})
+  end
+
+  step "the pull request title is {string}", %{args: [title]} = context do
+    assert result(context)["pr"]["title"] == title
+    context
+  end
+
+  step "the repository shows {string} through a text conversion diff driver",
+       %{args: [path]} = context do
+    log = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "textconv"), "calls.log")
+    script = Path.join(Path.dirname(log), "shout.sh")
+    File.write!(script, "#!/bin/sh\necho ran >> #{log}\ntr 'a-z' 'A-Z' < \"$1\"\n")
+    File.chmod!(script, 0o755)
+
+    World.commit!(
+      context.cwd,
+      %{path => "source line\n", ".gitattributes" => "#{path} diff=shout\n"},
+      "Add notes"
+    )
+
+    World.git!(context.cwd, ["config", "diff.shout.textconv", script])
+    Map.put(context, :textconv_log, log)
+  end
+
+  step "the change being written up edits the line {string} in {string}",
+       %{args: [line, path]} = context do
+    File.write!(Path.join(context.cwd, path), "#{line} edited\n")
+    context
+  end
+
+  step "commit message is generated", context do
+    commit(context, %{})
+  end
+
+  step "the writer is given {string} as it is in the file", %{args: [line]} = context do
+    prompts = Shared.writer_prompts(context)
+    assert Enum.any?(prompts, &(&1 =~ line))
+    refute Enum.any?(prompts, &(&1 =~ String.upcase(line)))
+    context
+  end
+
+  step "the text conversion command does not run", context do
+    refute File.exists?(context.textconv_log)
+    context
+  end
+
+  step "the user's git config sets color.ui to always", context do
+    World.git!(context.cwd, ["config", "color.ui", "always"])
+    context
+  end
+
+  step "the user commits, pushes and opens a pull request without writing any text", context do
+    commit(context, %{"action" => "commit_push_pr"})
+  end
+
+  step "the patch, commit log and diff stat the writer model sees hold no color codes",
+       context do
+    prompts = Shared.writer_prompts(context)
+    assert [_ | _] = prompts
+    for prompt <- prompts, do: refute(prompt =~ "\e[")
+    context
+  end
+
+  # --- a bounded writer view --------------------------------------------------------------
+
+  step ~r/^the branch has a (?<part>commit list|summary of files|patch) longer than (?<limit>[\d,]+) characters$/,
+       %{args: [part, _limit]} = context do
+    context = pushed_branch(context, "feature/tax")
+
+    case part do
+      "commit list" ->
+        for _ <- 1..130 do
+          World.git!(context.cwd, [
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            String.duplicate("x", 180)
+          ])
+        end
+
+      "summary of files" ->
+        files = Map.new(1..800, &{"src/many/f#{&1}.ts", "export const f#{&1} = 1\n"})
+        World.commit!(context.cwd, files, "Add many files")
+
+      "patch" ->
+        big = Enum.map_join(1..4_000, "\n", &"line #{&1} of the big file")
+        World.commit!(context.cwd, %{"src/big.ts" => big <> "\n"}, "Add a big file")
+    end
+
+    Map.put(context, :bounded_part, part)
+  end
+
+  step ~r/^the writer is given at most (?<limit>[\d,]+) characters of the (?<part>commit list|summary of files|patch)$/,
+       %{args: [limit, part]} = context do
+    limit = limit |> String.replace(",", "") |> String.to_integer()
+    prompt = Enum.find(Shared.writer_prompts(context), &(&1 =~ "change request content"))
+    assert prompt, "no pull request prompt was written"
+
+    {from, to} =
+      case part do
+        "commit list" -> {"Commits:\n", "\nDiff stat:"}
+        "summary of files" -> {"Diff stat:\n", "\nDiff patch:"}
+        "patch" -> {"Diff patch:\n", "\nThread history"}
+      end
+
+    section =
+      prompt |> String.split(from, parts: 2) |> List.last() |> String.split(to, parts: 2) |> hd()
+
+    assert String.length(section) <= limit,
+           "#{part} section is #{String.length(section)} characters"
+
+    context
+  end
+
+  # --- pull request creation ----------------------------------------------------------------
+
+  # The Background's changes committed on `branch` and pushed to origin, tracking it.
+  defp pushed_branch(context, branch) do
+    World.git!(context.cwd, ["checkout", "-q", "-b", branch])
+    World.git!(context.cwd, ["add", "-A"])
+    World.git!(context.cwd, ["commit", "-q", "-m", "Add tax to the cart"])
+    World.git!(context.cwd, ["push", "-q", "-u", "origin", branch])
+    context
+  end
+
+  # A branch on origin (and a local remote-tracking ref), from the current HEAD.
+  defp ensure_remote_branch(context, branch) do
+    World.git!(context.cwd, ["branch", "-f", branch, "HEAD"])
+    World.git!(context.cwd, ["push", "-q", "origin", branch])
+    World.git!(context.cwd, ["fetch", "-q", "origin"])
+    context
+  end
+
+  defp host_default(context, branch) do
+    context = ensure_remote_branch(context, branch)
+    World.git!(context.cwd, ["remote", "set-head", "origin", branch])
+    context
+  end
+
+  step "the branch {string} is pushed and has the open pull request #\{int}",
+       %{args: [branch, number]} = context do
+    context = pushed_branch(context, branch)
+
+    World.cli_rules(context, %{
+      "args" => ["pr list", "--head #{branch}"],
+      "stdout" => [Shared.gh_pr(context.repository, number, %{"headRefName" => branch})]
+    })
+  end
+
+  step "no text is written and nothing is created on the host", context do
+    assert Shared.writer_prompts(context) == []
+    assert World.cli_calls(context, "pr create") == []
+    context
+  end
+
+  step "the result is the existing pull request #\{int} with its link",
+       %{args: [number]} = context do
+    pr = result(context)["pr"]
+    assert pr["status"] == "opened_existing"
+    assert pr["number"] == number
+    assert pr["url"] =~ "/pull/#{number}"
+    context
+  end
+
+  step ~r/^"(?<branch>[^"]+)" has the recorded merge base "(?<base>[^"]+)" and the host's default is "(?<default>[^"]+)"$/,
+       %{args: [branch, base, default]} = context do
+    context
+    |> pushed_branch(branch)
+    |> ensure_remote_branch(String.replace_prefix(base, "origin/", ""))
+    |> host_default(default)
+    |> record_base(branch, base)
+  end
+
+  step ~r/^"(?<branch>[^"]+)" has the recorded merge base "(?<base>[^"]+)"$/,
+       %{args: [branch, base]} = context do
+    context
+    |> pushed_branch(branch)
+    |> ensure_remote_branch(String.replace_prefix(base, "origin/", ""))
+    |> record_base(branch, base)
+  end
+
+  step ~r/^"(?<branch>[^"]+)" has the recorded merge base the (?<kind>commit|tag|revision) "(?<ref>[^"]+)" and the host's default is "(?<default>[^"]+)"$/,
+       %{args: [branch, kind, ref, default]} = context do
+    context = context |> pushed_branch(branch) |> host_default(default)
+
+    value =
+      case kind do
+        "commit" -> World.git!(context.cwd, ~w(rev-parse HEAD))
+        "tag" -> World.git!(context.cwd, ["tag", ref]) && ref
+        "revision" -> ref
+      end
+
+    record_base(context, branch, value)
+  end
+
+  defp record_base(context, branch, base) do
+    World.git!(context.cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+    context
+  end
+
+  step ~r/^"(?<branch>[^"]+)" tracks "(?<upstream>[^"]+)" and is not from a fork$/,
+       %{args: [branch, upstream]} = context do
+    [remote, name] = String.split(upstream, "/", parts: 2)
+    context = ensure_remote_branch(context, name)
+    World.git!(context.cwd, ["checkout", "-q", "-b", branch, upstream])
+    World.git!(context.cwd, ["add", "-A"])
+    World.git!(context.cwd, ["commit", "-q", "-m", "Add tax to the cart"])
+    assert World.git!(context.cwd, ["config", "--get", "branch.#{branch}.remote"]) == remote
+    context
+  end
+
+  step ~r/^"(?<branch>[^"]+)" tracks a branch of the same name and the host's default is "(?<default>[^"]+)"$/,
+       %{args: [branch, default]} = context do
+    context |> pushed_branch(branch) |> host_default(default)
+  end
+
+  step "the host cannot be asked and the remote's default branch is {string}",
+       %{args: [default]} = context do
+    # The fake gh already refuses `repo view` (the host's own answer); only the
+    # remote's HEAD names a default.
+    context |> pushed_branch("feature/tax") |> host_default(default)
+  end
+
+  step "nothing records a default branch", context do
+    context = pushed_branch(context, "feature/tax")
+    System.cmd("git", ["-C", context.cwd, "symbolic-ref", "-d", "refs/remotes/origin/HEAD"])
+    context
+  end
+
+  step "the pull request targets {string}", %{args: [base]} = context do
+    assert result(context)["pr"]["baseBranch"] == base
+    context
+  end
+
+  step "the user makes a worktree for {string} from the commit {string}",
+       %{args: [branch, _commit]} = context do
+    sha = World.git!(context.cwd, ~w(rev-parse HEAD))
+
+    {reply, context} =
+      World.call(context, "vcs.createWorktree", %{
+        "cwd" => context.cwd,
+        "refName" => sha,
+        "newRefName" => branch
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "{string} has no recorded merge base", %{args: [branch]} = context do
+    assert {_, 1} =
+             System.cmd("git", [
+               "-C",
+               context.cwd,
+               "config",
+               "--get",
+               "branch.#{branch}.gh-merge-base"
+             ])
+
+    context
+  end
+
   defp hook(context, script) do
     hook = Path.join([context.cwd, ".git", "hooks", "pre-commit"])
     File.write!(hook, "#!/bin/sh\n#{script}\n")

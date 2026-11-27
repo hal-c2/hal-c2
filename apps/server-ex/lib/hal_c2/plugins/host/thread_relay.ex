@@ -54,8 +54,8 @@ defmodule HalC2.Plugins.Host.ThreadRelay do
     if MapSet.size(projects) == 0 do
       []
     else
-      for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
-          mc == node() and row["deletedAt"] == nil,
+      for {{_mc, id}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+          row["deletedAt"] == nil,
           MapSet.member?(projects, row["projectId"]) and not MapSet.member?(changed, id),
           do: row
     end

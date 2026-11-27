@@ -23,9 +23,11 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   publish the C++ state shape until H1 ports them: `scanner.rs`
   (Scanner/ScanCamera/QrReader), `notifications.rs`
   (Notifications and the push inbox).
-- `qml/` is the entry and the QML stubs in `HalC2.Shell` for the two C++
-  types the phone's screens name, `TerminalEvents` and `TurnAgents`
-  (#1624), each saying what it cannot do until the real type lands.
+- `qml/` is the entry and the QML stub in `HalC2.Shell` for the C++
+  type the phone's screens name that Ljós cannot do yet,
+  `TerminalEvents` (#1624), saying what it cannot do until the real
+  type lands. `TurnAgents` is the shell's native type now
+  (`apps/desktop-ljos/shell/src/thread_view/turn_agents.rs`).
 
 The crate is its own cargo workspace beside desktop-ljos's (a member
 outside that root cannot inherit from it), so its Ljós pin is spelled out

@@ -291,15 +291,10 @@ defmodule HalC2.OpenShell.Broker do
         end
 
       {:error, code, message} ->
-        failure = %{"_tag" => "OrchestratorMcpFailure", "code" => code, "message" => message}
+        send_json(conn, result(id, HalC2.Mcp.failure_result(code, message)))
 
-        send_json(
-          conn,
-          result(id, %{
-            "content" => [%{"type" => "text", "text" => JSON.encode!(failure)}],
-            "isError" => true
-          })
-        )
+      {:error, code, message, extra} ->
+        send_json(conn, result(id, HalC2.Mcp.failure_result(code, message, extra)))
 
       nil ->
         send_json(conn, rpc_error(id, -32602, "Unknown tool: #{tool}"))

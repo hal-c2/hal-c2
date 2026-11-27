@@ -57,7 +57,7 @@ defmodule HalC2.PullRequests.Sync do
   end
 
   @impl true
-  def handle_call(:sweep, _from, state), do: {:reply, :ok, sweep(state, nil)}
+  def handle_call(:sweep, _from, state), do: {:reply, :ok, sweep(state, nil), :hibernate}
 
   @impl true
   def handle_cast({:request, ref}, state) do
@@ -73,18 +73,18 @@ defmodule HalC2.PullRequests.Sync do
           uniq: true,
           do: Links.key(link)
 
-    {:noreply, request_keys(state, keys)}
+    {:noreply, request_keys(state, keys), :hibernate}
   end
 
   @impl true
   def handle_info(:tick, state) do
     state = sweep(state, nil)
     Process.send_after(self(), :tick, state.interval)
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   def handle_info(:run, state),
-    do: {:noreply, sweep(%{state | pending: MapSet.new()}, state.pending)}
+    do: {:noreply, sweep(%{state | pending: MapSet.new()}, state.pending), :hibernate}
 
   # A link that appears unsynced is read at once; one that stays unsynced waits for
   # the sweep, so a pull request the host cannot answer for is not asked every row.
@@ -97,7 +97,7 @@ defmodule HalC2.PullRequests.Sync do
           {Map.put(unsynced, id, now), MapSet.to_list(new) ++ keys}
       end
 
-    {:noreply, request_keys(%{state | unsynced: unsynced}, keys)}
+    {:noreply, request_keys(%{state | unsynced: unsynced}, keys), :hibernate}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -122,8 +122,8 @@ defmodule HalC2.PullRequests.Sync do
   end
 
   defp threads do
-    for {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["deletedAt"] == nil,
+    for {{_mc, _}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+        row["deletedAt"] == nil,
         do: row
   end
 

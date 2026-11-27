@@ -112,7 +112,10 @@ which **Settings → Review sandboxes** installs, and its agent must be Claude o
 with an API key, or **Claude via CLIProxyAPI** or **Codex via CLIProxyAPI** from the
 [CLIProxyAPI plugin](plugins.md#cliproxyapi). Any other agent, a provider that sends
 its agent to a base URL of its own, or an MC without OpenShell fails the review and
-says what to set up. A review never falls back to running on your machine.
+says what to set up. A review never falls back to running on your machine. A sign-in
+to Claude or Codex on this machine does not reach the sandbox, so an agent signed in
+without an API key fails its reviews too: **Settings → Code review** says so when you
+pick it, and names the CLIProxyAPI plugin's provider to pick instead.
 
 **Review trusted pull requests on this machine** opts out for the pull requests
 HAL-C2 trusts: those opened by a member or collaborator of the repository, or by one
@@ -190,8 +193,8 @@ comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 
 suggested fix, which is posted as a GitHub suggestion you can apply from the
 pull request. HAL-C2 also puts the pull request's description and its
 unresolved review comments in the agent's prompt (on this machine, only the
-comments of people HAL-C2 trusts), so it can judge the change against what it says it does and leave out what
-someone else already raised. Resolved comments are not included.
+comments of people HAL-C2 trusts), so it can judge the change against what it says it does and check whether
+each of them is fixed, still open, or wrong, rather than skip them. Resolved comments are not included.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:
@@ -201,6 +204,8 @@ repository:
   comments you do not want first.
 - **Post automatically** posts it as soon as the agent is done. A pull request
   from someone the repository does not trust waits for you to publish instead.
+
+**Review heading** sets the first line of every posted review, so readers can tell an agent wrote it; leave it empty to skip the heading.
 
 With **Post verdicts as comments**, a review is posted as a comment rather than
 an approval or a request for changes. On your own pull requests, which GitHub

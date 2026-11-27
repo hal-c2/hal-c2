@@ -4,8 +4,8 @@ name: Merge queue watchdog
 # wedges a queue run: the run ends while `CI result` never got a runner, or the run never
 # gets a job, and the queue holds the entry and everything behind it for its check timeout.
 # This drops such an entry with a comment saying why, and its owner re-queues it. Entries
-# ahead of the last one park (ci.yml's `park`): when the last one fails and leaves, this
-# starts the new last one's tests, and it cancels runs no entry reads any more.
+# ahead of the last one park (ci.yml's `park`): when an entry fails, this tests every parked
+# one ahead of it at once to find the culprit, and it cancels runs no entry reads any more.
 #
 # A queue run that ends is when a wedge or a departure shows. GitHub sends no workflow_run
 # for a run GITHUB_TOKEN started, so a promoted one dispatches this itself as it ends

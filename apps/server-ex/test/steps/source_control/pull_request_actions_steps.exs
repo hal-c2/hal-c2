@@ -7,6 +7,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
   action is the `gh` call that makes it.
   """
   use Cucumber.StepDefinition
+  # Step files compile one by one; the stack steps are in a later one.
+  @compile {:no_warn_undefined, HalC2.Steps.SourceControl.StackedPullRequests}
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
@@ -38,13 +40,19 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
   # "is a draft" and "is closed" set the pull request up before an action, and after
   # one they check that the action asked GitHub for it.
   step "pull request {int} is a draft", %{args: [number]} = context do
-    if context.acted do
-      acted!(context, number, ["pr", "ready", "#{number}"], ["--undo"])
-      context
-    else
-      context = Shared.reshape_pr(context, %{"isDraft" => true})
-      assert Shared.pr_detail!(context)["isDraft"] == true
-      context
+    cond do
+      context.acted ->
+        acted!(context, number, ["pr", "ready", "#{number}"], ["--undo"])
+        context
+
+      # In a stack scenario the draft layer is the stack read's, not the detail's.
+      context[:stack] ->
+        HalC2.Steps.SourceControl.StackedPullRequests.mark_draft(context, number)
+
+      true ->
+        context = Shared.reshape_pr(context, %{"isDraft" => true})
+        assert Shared.pr_detail!(context)["isDraft"] == true
+        context
     end
   end
 
