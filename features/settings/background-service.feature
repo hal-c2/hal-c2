@@ -401,7 +401,7 @@ Feature: Background activity and the background service
       Then the service is written where the service manager looks, and starts at login
       And its status, restart and uninstall use that same folder
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: Windows has no background service yet
       Given the MC runs on Windows
       When the user installs the background service

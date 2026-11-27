@@ -344,8 +344,20 @@ defmodule HalC2.Steps.Orchestration.Projects do
   step "thread {string} of project {string} works in a worktree outside the project folder",
        %{args: [thread, project]} = context do
     worktree = Mc.tmp_dir(context.mc, "worktree")
-    context = World.create_project(context, project)
-    refute String.starts_with?(worktree, World.project(context, project).root)
+
+    context =
+      if context.projects[project], do: context, else: World.create_project(context, project)
+
+    root = World.project(context, project).root
+    refute String.starts_with?(worktree, root)
+
+    # A git project gets a real worktree (with a change in it) so its review
+    # can be read; a plain folder keeps the empty folder.
+    if File.dir?(Path.join(root, ".git")) do
+      World.git!(root, ["worktree", "add", "-q", "-b", "hal-c2/#{thread}", worktree])
+      File.mkdir_p!(Path.join(worktree, "src"))
+      File.write!(Path.join(worktree, "src/worktree-change.ts"), "export const w = 1\n")
+    end
 
     context
     |> World.create_thread(thread, project, %{

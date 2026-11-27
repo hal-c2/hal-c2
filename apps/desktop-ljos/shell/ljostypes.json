@@ -5509,6 +5509,69 @@
           ]
         },
         {
+          "name": "TurnAgents",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "timeline",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "timelineChanged"
+            },
+            {
+              "name": "active",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "activeChanged"
+            },
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "summary",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "summaryChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
           "name": "DiffModel",
           "since": "1.0",
           "base": null,

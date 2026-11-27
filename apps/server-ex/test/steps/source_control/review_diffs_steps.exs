@@ -355,8 +355,18 @@ defmodule HalC2.Steps.SourceControl.ReviewDiffs do
   end
 
   step "the user reviews the working tree of {string}", %{args: [title]} = context do
-    root = World.project(context, title).root
+    # A thread title reviews its worktree; a project title its checkout.
+    root =
+      if (context[:threads] || %{})[title] && context[:worktree],
+        do: context.worktree,
+        else: World.project(context, title).root
+
     review(%{context | cwd: root}) |> Map.put(:cwd, context.cwd)
+  end
+
+  step "the changes in that worktree are shown", context do
+    assert %{"src/worktree-change.ts" => %{"additions" => 1}} = stats(context, "working-tree")
+    context
   end
 
   step "{string} and {string} are both shown as new files", %{args: paths} = context do

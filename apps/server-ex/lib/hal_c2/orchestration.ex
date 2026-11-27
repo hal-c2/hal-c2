@@ -134,19 +134,23 @@ defmodule HalC2.Orchestration do
 
   # This MC's archived threads, with the projects they belong to.
   def handle("orchestration.getArchivedShellSnapshot", _input) do
-    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
+    projects =
+      for {{_mc, _id}, {"project", row}} <- HalC2.Shell.query(mc: :local, kind: "project"),
+          row["deletedAt"] == nil,
+          do: row
+
+    threads =
+      for {{_mc, _id}, {"thread", row}} <-
+            HalC2.Shell.query(mc: :local, kind: "thread", present: "archivedAt"),
+          row["deletedAt"] == nil,
+          do: row
 
     {:ok,
      %{
        "schemaVersion" => 1,
        "snapshotSequence" => 0,
-       "projects" => for({"project", row} <- rows, row["deletedAt"] == nil, do: row),
-       "threads" =>
-         for(
-           {"thread", row} <- rows,
-           row["deletedAt"] == nil and row["archivedAt"] != nil,
-           do: row
-         )
+       "projects" => projects,
+       "threads" => threads
      }}
   end
 
@@ -6291,9 +6295,9 @@ defmodule HalC2.Orchestration do
   defp project_root(nil), do: nil
 
   defp project_root(project_id) do
-    Enum.find_value(HalC2.Shell.rows(), fn
-      {{mc, ^project_id}, {"project", row}} when mc == node() -> row["workspaceRoot"]
+    case HalC2.Shell.row(node(), project_id) do
+      {"project", row} -> row["workspaceRoot"]
       _ -> nil
-    end)
+    end
   end
 end

@@ -38,8 +38,14 @@ defmodule HalC2.Streams.Server do
   starts from is put together there too, not in the stream.
 
   Replay reads the log, not memory, so a reconnecting client costs one query rather
-  than a buffered copy of the thread. The process hibernates between bursts and stops
-  after `@idle_stop` with no subscribers; it writes a snapshot on the way out when
+  than a buffered copy of the thread. Loading, deciding, catch-up and paging churn
+  far more than the state they leave behind, and sweeps across the MC read streams
+  on staggered timers, so an idle stream rarely sits quiet long enough for
+  `hibernate_after` alone: once a burst is handled and nothing is queued behind it,
+  a heap grown well past what the state needs is collected there and then
+  (`handle_continue(:release_memory, _)`), a hot stream with work queued never
+  pays for it, and hibernation is only the backstop. The process stops after
+  `@idle_stop` with no subscribers; it writes a snapshot on the way out when
   enough events accumulated since the last one.
   """
 
@@ -59,6 +65,10 @@ defmodule HalC2.Streams.Server do
   @chunk_bytes 256 * 1024
   # While a thread streams, its sidebar row is recomputed at most this often.
   @shell_debounce 250
+  # A handled burst is collected at once only past both of these (in words, about
+  # 256 KB and 1 MB at 8 bytes): under them the next minor collection is cheaper.
+  @gc_min_words 32_768
+  @gc_slack_words 131_072
 
   @typedoc """
   What a client asks for: the `handle` its offset came from, the `kinds` it folds
@@ -98,7 +108,10 @@ defmodule HalC2.Streams.Server do
     do:
       GenServer.start_link(__MODULE__, stream_id,
         name: {:via, Registry, {HalC2.Streams.Registry, stream_id}},
-        hibernate_after: 15_000
+        # A backstop only: the garbage of a burst goes with the burst (see the
+        # moduledoc), and 15 quiet seconds are more than the MC's staggered
+        # 30-60 s sweeps leave an idle stream between one read and the next.
+        hibernate_after: 5_000
       )
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil) :: :ok
@@ -286,12 +299,17 @@ defmodule HalC2.Streams.Server do
        pins: [],
        # Memory holds this many turn items before the stream tries to demote some.
        demote_at: 2 * StreamState.hot_items(),
+       # Heap words the state itself needed at the last release (`timeout/1`).
+       gc_floor: 0,
        shell_scheduled: false,
        # pid => %{ref: monitor, view: View.t() | :plain | :watch}
        subscribers: %{},
        # pid => the relay of a subscriber on another MC
        relays: %{}
-     }, @idle_stop}
+       # Folding the snapshot and the log is the heaviest burst of all: what it
+       # churned goes before the first message is served, and the continue
+       # leaves the idle timeout armed behind it.
+     }, {:continue, :release_memory}}
   end
 
   @impl true
@@ -314,7 +332,8 @@ defmodule HalC2.Streams.Server do
       end
 
     sub = %{ref: Process.monitor(pid), view: view, name: name(state.id, client)}
-    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub)}}
+    state = %{state | subscribers: Map.put(state.subscribers, pid, sub)}
+    {:reply, :ok, state, timeout(state)}
   end
 
   # Nothing to write is nothing to tell anyone; the stream stays where it is.
@@ -434,15 +453,43 @@ defmodule HalC2.Streams.Server do
       now = map_size(StreamState.get(compacted, "turn-item"))
       demote_at = max(2 * StreamState.hot_items(), if(now == held, do: 2 * held, else: 0))
 
-      snapshot_seq =
-        if compacted.floor != stream.floor or now != held,
-          do: compacted.seq,
-          else: state.snapshot_seq
+      demoted? = compacted.floor != stream.floor or now != held
+      snapshot_seq = if demoted?, do: compacted.seq, else: state.snapshot_seq
 
-      %{state | stream: compacted, demote_at: demote_at, snapshot_seq: snapshot_seq}
+      state = %{state | stream: compacted, demote_at: demote_at, snapshot_seq: snapshot_seq}
+
+      # The floor was the heap of a state that held what just went cold: left
+      # standing, it would hold the release off until the heap grows half as
+      # much again. Zero makes this commit's `timeout/1` schedule the release,
+      # which records the floor of what remains.
+      if demoted?, do: Map.put(state, :gc_floor, 0), else: state
     else
       state
     end
+  end
+
+  @impl true
+  def handle_continue(:release_memory, state) do
+    # Work queued behind the burst is served first: it may be the same burst.
+    state =
+      if queued?() do
+        state
+      else
+        :erlang.garbage_collect()
+        floor = heap_words()
+
+        # The receipt that the collection ran and what it left: a caller of the
+        # burst was answered before this continue, so nothing else says it did.
+        :telemetry.execute(
+          [:hal_c2, :streams, :release_memory],
+          %{heap_words: floor},
+          %{stream: state.id, server: self()}
+        )
+
+        Map.put(state, :gc_floor, floor)
+      end
+
+    {:noreply, state, idle_timeout(state)}
   end
 
   @impl true
@@ -534,7 +581,9 @@ defmodule HalC2.Streams.Server do
         pins: []
     }
 
-    {:noreply, compact(state), timeout(state)}
+    # Demoting resets the release floor, which the timeout reads.
+    state = compact(state)
+    {:noreply, state, timeout(state)}
   end
 
   # One the stream's own read already waited for.
@@ -591,6 +640,7 @@ defmodule HalC2.Streams.Server do
     {:ok,
      state
      |> Map.put_new_lazy(:relays, fn -> relays(subscribers) end)
+     |> Map.put_new(:gc_floor, 0)
      |> Map.put_new(:demote_at, 2 * StreamState.hot_items())
      |> Map.put_new(:migration, nil)
      |> Map.put_new(:cold_waiters, [])
@@ -863,10 +913,32 @@ defmodule HalC2.Streams.Server do
     end)
   end
 
+  # What a callback returns in its timeout place. A burst just handled left
+  # garbage beside the state it kept: with nothing queued behind it, a heap
+  # grown by more than the larger of `@gc_slack_words` and half the heap the
+  # state itself needed at the last release is collected before the next
+  # message (`handle_continue(:release_memory, _)`), which arms the plain
+  # idle timeout behind it. A stream with work queued, or a heap that is
+  # mostly its own state, waits as it always did.
+  defp timeout(state) do
+    if bloated?(state) and not queued?(),
+      do: {:continue, :release_memory},
+      else: idle_timeout(state)
+  end
+
+  defp bloated?(state) do
+    heap = heap_words()
+    floor = Map.get(state, :gc_floor, 0)
+    heap > @gc_min_words and heap > floor + max(@gc_slack_words, div(floor, 2))
+  end
+
+  defp heap_words, do: elem(Process.info(self(), :total_heap_size), 1)
+  defp queued?, do: elem(Process.info(self(), :message_queue_len), 1) > 0
+
   # A migrating stream stays up until its migration is done.
-  defp timeout(%{migration: pid}) when is_pid(pid), do: :infinity
-  defp timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
-  defp timeout(_state), do: :infinity
+  defp idle_timeout(%{migration: pid}) when is_pid(pid), do: :infinity
+  defp idle_timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
+  defp idle_timeout(_state), do: :infinity
 
   # Writes the cold rows of an older MC's snapshot that `StreamState.load/3` left to
   # it, at low priority and one stream at a time (`HalC2.Streams.Migrations`), so

@@ -245,6 +245,22 @@ Feature: MC plugins
     When an agent starts a turn in a project that allows MCP
     Then the agent can call the "jira-tools" tools
 
+  # #1857: an agent branches on a plugin's own error code, so a tool pack's
+  # structured error keeps it instead of becoming plugin_failed.
+  @mc
+  Scenario Outline: A tool pack's failure reaches the agent with the plugin's own code
+    Given the MCP tool pack "jira-tools" is enabled
+    When an agent starts a turn in a project that allows MCP
+    And the agent searches Jira for "<query>"
+    Then the tool fails from "jira-tools" with the code "<code>" and the details <details>
+
+    Examples:
+      | query      | code          | details            |
+      | ?          | invalid_input | {"field":"query"}  |
+      | everything | rate_limited  | {"retryAfter":60}  |
+      | offline    | plugin_failed | none               |
+      | boom       | plugin_failed | none               |
+
   @mc
   Scenario: A project that turns off MCP gets no tool pack tools either
     Given the MCP tool pack "jira-tools" is enabled

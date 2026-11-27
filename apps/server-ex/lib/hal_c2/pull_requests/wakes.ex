@@ -56,26 +56,26 @@ defmodule HalC2.PullRequests.Wakes do
   @impl true
   def handle_continue(:sweep, state) do
     check_all()
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_call(:sweep, _from, state) do
     check_all()
-    {:reply, :ok, state}
+    {:reply, :ok, state, :hibernate}
   end
 
   @impl true
   def handle_info({:hal_c2_shell, {:rows, mc, rows}}, state) when mc == node() do
     for {id, {"thread", row}} <- rows, due?(row), do: safe_check(id)
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
 
   defp check_all do
-    for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node(),
+    for {{_mc, id}, {"thread", row}} <-
+          HalC2.Shell.query(mc: :local, kind: "thread", present: "pullRequests"),
         due?(row),
         do: safe_check(id)
   end

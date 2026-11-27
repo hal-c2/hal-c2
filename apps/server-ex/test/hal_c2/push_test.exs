@@ -303,6 +303,61 @@ defmodule HalC2.PushTest do
     assert [%{"title" => "First there"}] = PushPhone.alerts(phone)
   end
 
+  test "a member known only by its descriptor is baselined when its rows arrive", %{
+    context: context,
+    phone: phone
+  } do
+    register(context, phone)
+    peer = :"desc@127.0.0.1"
+
+    # The member's descriptor reaches the shell before any of its rows.
+    send(HalC2.Shell, {:nodeup, peer})
+
+    GenServer.cast(
+      HalC2.Shell,
+      {:peer_environment, peer, %{"environmentId" => "env-desc", "label" => "Desc"}}
+    )
+
+    :ok = HalC2.Shell.sync()
+    assert {^peer, _descriptor} = List.keyfind(HalC2.Shell.environments(), peer, 0)
+    refute peer in HalC2.Shell.held_mcs()
+
+    # Push starts again, still with no rows of the member held: the descriptor
+    # alone must not mark it known, or its first rows would skip the baseline.
+    :ok = stop_supervised(Push)
+    Mc.ensure(PushPhone.service())
+
+    row = fn run, at ->
+      %{
+        "id" => "far",
+        "title" => "Far away",
+        "latestRunId" => run,
+        "status" => "completed",
+        "latestRunCompletedAt" => at,
+        "updatedAt" => at
+      }
+    end
+
+    # Finished after Push restarted, so only the baseline keeps it quiet.
+    GenServer.cast(
+      HalC2.Shell,
+      {:peer_rows, peer, {"desc-run", 1}, 0,
+       [{"far", {"thread", row.("1", World.iso_from_now(1000))}, 1}], true}
+    )
+
+    :ok = Push.drain()
+    assert PushPhone.alerts(phone) == []
+
+    GenServer.cast(
+      HalC2.Shell,
+      {:peer_rows, peer, {"desc-run", 2}, 1,
+       [{"far", {"thread", row.("2", World.iso_from_now(2000))}, 2}], false}
+    )
+
+    :ok = Push.drain()
+    assert [%{"title" => "Far away"}] = PushPhone.alerts(phone)
+  end
+
   test "a card for work still running is sent again before it expires", %{
     context: context,
     phone: phone
