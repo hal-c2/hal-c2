@@ -33,6 +33,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
   @heading "## Agentic code review\n\n"
+  @marker ~r/<!-- hal-c2-code-review:[^>]* -->/
   # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
@@ -1134,6 +1135,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # Claude in a sandbox reviews on the MC's API key for Anthropic, which only its
   # sandbox's provider gets.
+  # A posted body without the marker the plugin appends to recognise its own reviews
+  # and threads (`marker/1`).
+  defp unmarked(body), do: String.replace(body, @marker, "") |> String.trim_trailing()
+
   defp claude(context, settings) do
     World.put_env("ANTHROPIC_API_KEY", "sk-test-anthropic")
     save(context, Map.put(settings, "provider", World.instance("Claude")))
@@ -1630,9 +1635,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert {:ok, _} = context.reply
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
-    # The marker code review finds its own reviews by is the one HTML it writes.
-    body = String.replace(review["body"], ~r/<!-- hal-c2-code-review:[^>]* -->/, "")
-    text = Enum.join([body | Enum.map(review["comments"], & &1["body"])], "\n")
+    # The marker code review finds its own reviews and findings by is the one HTML it
+    # writes; anything else the agent wrote must come out escaped.
+    bodies = [review["body"] | Enum.map(review["comments"], & &1["body"])]
+    text = Enum.map_join(bodies, "\n", &unmarked/1)
     refute text =~ ~r/(^|[^\w])@[\w-]/u
     refute text =~ "!["
     refute text =~ ~r/<[A-Za-z!\/?]/
@@ -1883,7 +1889,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => body}] = review["comments"]
-    assert body == "🔵 **Low:**\n\n**Order:** This always allows."
+    assert body =~ @marker
+    assert unmarked(body) == "🔵 **Low:**\n\n**Order:** This always allows."
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
@@ -2157,7 +2164,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert review["event"] == "REQUEST_CHANGES"
-    assert Enum.map(review["comments"], & &1["body"]) == ["Finding 2.", "Finding 3."]
+    assert Enum.map(review["comments"], &unmarked(&1["body"])) == ["Finding 2.", "Finding 3."]
     context
   end
 
