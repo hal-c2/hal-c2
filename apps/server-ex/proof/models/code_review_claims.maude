@@ -621,7 +621,7 @@ mod CODE-REVIEW-CLAIMS is
            periodic(spend(K == tick or ticks(L1), Bu)) C)) }
     if R' := (if B then R else applied(R, S, orAway(W, R, S, near(X, C))) fi) .
 
-  --- run/2: Checkout.prepare/5 fetches the head there is now.
+  --- run/2: Checkout.prepare/6 fetches the head there is now.
   crl [checkout] : { run(X, fetch) gh(S) C } => { run(X, out(S)) gh(S) C } if not unboxed(X, C) .
   rl [checkout] : run(X, here) gh(S) => run(X, out(S)) gh(S) .
 

@@ -49,7 +49,7 @@ use crate::controllers::settings::Settings;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::json::Json;
 use crate::mc::{Mc, Phase, Status};
-use crate::session::Session;
+use crate::session::{Session, expires_text};
 use crate::store;
 use crate::this_machine;
 use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing};
@@ -574,6 +574,7 @@ impl ConnectionHealth {
                     token: paired.token.clone(),
                     label: text(&paired, "label"),
                     environment_id: text(&paired, "environmentId"),
+                    expires_at: expires_text(paired.expires_at),
                 };
                 match crate::open(engine, &session) {
                     Ok(()) => self.network_changed(engine),
