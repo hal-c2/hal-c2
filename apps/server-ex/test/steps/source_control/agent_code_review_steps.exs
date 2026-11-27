@@ -1010,9 +1010,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "{int} members left unresolved review comments on \#{int}",
        %{args: [count, number]} = context do
+    # A body long enough that 31 of them exceed the ~12 KB comments budget, so the
+    # scenario still exercises the drop instead of fitting comfortably under it.
     Enum.reduce(1..count, context, fn i, context ->
-      review_comment(context, number, "octocat", "MEMBER", "Note #{i}.")
+      review_comment(
+        context,
+        number,
+        "octocat",
+        "MEMBER",
+        "Note #{i}. " <> String.duplicate("x", 500)
+      )
     end)
+  end
+
+  step "a member replied {string} to the open thread on \#{int}",
+       %{args: [body, number]} = context do
+    review_reply(context, number, "octocat", "MEMBER", body)
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
@@ -3617,6 +3630,67 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     }
 
     threads = threads ++ [thread]
+
+    view = %{
+      "author" => %{"login" => "octocat"},
+      "comments" => [],
+      "reviews" => [],
+      "commits" => []
+    }
+
+    answer = %{
+      "data" => %{
+        "viewer" => %{"login" => "monalisa"},
+        "repository" => %{
+          "pullRequest" => %{
+            "reviewThreads" => %{"pageInfo" => %{"hasNextPage" => false}, "nodes" => threads},
+            "author" => %{"__typename" => "User", "login" => "octocat", "avatarUrl" => nil},
+            "reactionGroups" => [],
+            "comments" => %{"nodes" => []},
+            "reviews" => %{"nodes" => []},
+            "reviewRequests" => %{"nodes" => []},
+            "latestReviews" => %{"nodes" => []},
+            "reviewDismissals" => %{"nodes" => []},
+            "commits" => %{"nodes" => []}
+          }
+        }
+      }
+    }
+
+    context
+    |> World.cli_rules([
+      %{"args" => ["pr view #{number}", "author,comments,reviews,commits"], "stdout" => view},
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["reviewThreads(first", "viewerDidAuthor", ~s("number":#{number},)],
+        "stdout" => answer
+      }
+    ])
+    |> Map.update(:review_threads, %{number => threads}, &Map.put(&1, number, threads))
+  end
+
+  # Appends a reply to the most recently added thread on #`number`, keeping its id,
+  # so a scenario can exercise a thread rendered with more than one comment.
+  defp review_reply(context, number, login, association, body) do
+    threads = Map.get(context[:review_threads] || %{}, number, [])
+    {leading, [thread]} = Enum.split(threads, length(threads) - 1)
+    n = length(threads)
+
+    reply = %{
+      "id" => "RC#{n}R",
+      "author" => %{"__typename" => "User", "login" => login, "avatarUrl" => nil},
+      "authorAssociation" => association,
+      "body" => body,
+      "createdAt" => "2026-09-03T12:30:00Z",
+      "url" => "https://github.com/acme/api/pull/#{number}#discussion_r#{n}R",
+      "reactionGroups" => []
+    }
+
+    thread =
+      update_in(thread, ["comments", "nodes"], &(&1 ++ [reply]))
+      |> update_in(["comments", "totalCount"], &(&1 + 1))
+
+    threads = leading ++ [thread]
 
     view = %{
       "author" => %{"login" => "octocat"},

@@ -867,6 +867,138 @@ defmodule HalC2.CodeReviewTest do
     refute sandboxed =~ "resolved"
   end
 
+  # C1: every comment in a thread, not only the first, with the thread's id (so a
+  # later review can resolve it, #setThreadResolution) and whether it is outdated.
+  test "an open thread is rendered with its id and every comment, oldest first" do
+    settings = %{}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+
+    threads = [
+      %{
+        "id" => "PRRT_1",
+        "path" => "src/limits.ts",
+        "line" => 3,
+        "isResolved" => false,
+        "isOutdated" => true,
+        "comments" => [
+          %{"author" => %{"login" => "octocat"}, "body" => "Check the limit's unit."},
+          %{"author" => "stranger" |> then(&%{"login" => &1}), "body" => "fixed in a1b2c3d"}
+        ]
+      }
+    ]
+
+    [quoted] = apply(@server, :existing_comments, [settings, review, true, threads])
+
+    assert quoted =~ "[thread PRRT_1] src/limits.ts:3 (outdated)"
+    assert quoted =~ "octocat: Check the limit's unit."
+    assert quoted =~ "stranger: fixed in a1b2c3d"
+
+    assert Enum.find_index(String.split(quoted, "\n"), &(&1 =~ "octocat")) <
+             Enum.find_index(String.split(quoted, "\n"), &(&1 =~ "stranger"))
+  end
+
+  test "a thread with no id or outdated flag, as Forgejo gives, renders without them" do
+    settings = %{}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+
+    threads = [
+      %{
+        "path" => "src/limits.ts",
+        "line" => 3,
+        "isResolved" => false,
+        "comments" => [%{"author" => %{"login" => "octocat"}, "body" => "Check the unit."}]
+      }
+    ]
+
+    [quoted] = apply(@server, :existing_comments, [settings, review, true, threads])
+    refute quoted =~ "[thread"
+    refute quoted =~ "outdated"
+    assert quoted =~ "src/limits.ts:3"
+    assert quoted =~ "octocat: Check the unit."
+  end
+
+  test "each comment is cut at 600 characters" do
+    settings = %{}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+    long = String.duplicate("x", 1_000)
+
+    threads = [
+      %{
+        "id" => "PRRT_1",
+        "path" => "src/limits.ts",
+        "line" => 3,
+        "isResolved" => false,
+        "comments" => [%{"author" => %{"login" => "octocat"}, "body" => long}]
+      }
+    ]
+
+    [quoted] = apply(@server, :existing_comments, [settings, review, true, threads])
+    assert String.length(quoted) < 700
+    assert quoted =~ "[truncated]"
+  end
+
+  test "the whole block is cut to about 12 KB, dropping the oldest threads first" do
+    settings = %{}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+    body = String.duplicate("x", 500)
+
+    threads =
+      for i <- 1..30 do
+        %{
+          "id" => "PRRT_#{i}",
+          "path" => "src/limits.ts",
+          "line" => i,
+          "isResolved" => false,
+          "comments" => [%{"author" => %{"login" => "octocat"}, "body" => "#{i} #{body}"}]
+        }
+      end
+
+    quoted = apply(@server, :existing_comments, [settings, review, true, threads])
+    joined = Enum.join(quoted, "\n\n")
+
+    assert byte_size(joined) < 13 * 1024
+    assert List.last(quoted) =~ "more open thread(s), not shown here."
+    # The newest threads are kept, the oldest dropped.
+    assert joined =~ "[thread PRRT_30]"
+    refute joined =~ "[thread PRRT_1]"
+  end
+
+  # C1: the plugin's own threads stay quoted even once resolved, marked so the agent
+  # can tell which it opened (WP7 will let it resolve them by this id).
+  test "this plugin's own threads are kept and marked, even resolved" do
+    settings = %{}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+
+    threads = [
+      %{
+        "id" => "PRRT_1",
+        "path" => "src/limits.ts",
+        "line" => 3,
+        "isResolved" => true,
+        "comments" => [
+          %{
+            "author" => %{"login" => "monalisa", "isUser" => true},
+            "body" => "🔴 **High:**\n\nUnchecked input."
+          }
+        ]
+      },
+      %{
+        "id" => "PRRT_2",
+        "path" => "src/limits.ts",
+        "line" => 5,
+        "isResolved" => true,
+        "comments" => [%{"author" => %{"login" => "octocat"}, "body" => "resolved, not ours"}]
+      }
+    ]
+
+    quoted = apply(@server, :existing_comments, [settings, review, false, threads])
+    joined = Enum.join(quoted, "\n\n")
+
+    assert joined =~ "[thread PRRT_1] src/limits.ts:3 (yours)"
+    assert joined =~ "Unchecked input."
+    refute joined =~ "resolved, not ours"
+  end
+
   test "a review asked for before its pull request is listed starts at the head of the pull request",
        context do
     rules!(context, head: 1, listed: false)
