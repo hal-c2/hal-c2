@@ -234,9 +234,16 @@ defmodule HalC2.PullRequests.Forgejo do
           author = login(review["user"]),
           do: {author, at, "review", review_state(review["state"])}
 
+    # A comment's news is when it last changed: an edit is news once, as a new
+    # comment is (upstream #18120).
     comments =
       for comment <- comments,
-          at = utc(comment["created_at"]),
+          at =
+            Enum.max_by(
+              [utc(comment["created_at"]), utc(comment["updated_at"])] |> Enum.reject(&is_nil/1),
+              &(epoch(&1) || 0),
+              fn -> nil end
+            ),
           author = login(comment["user"]),
           do: {author, at, "comment", nil}
 
@@ -249,7 +256,10 @@ defmodule HalC2.PullRequests.Forgejo do
       "activity" => newest(trusted),
       "ownActivity" => newest(own),
       "activities" => newest_of_each_kind(trusted),
-      "ownActivities" => newest_of_each_kind(own)
+      "ownActivities" => newest_of_each_kind(own),
+      # Comment times here are edit times; a snapshot without this was synced
+      # under the creation-time stamp (`Wakes.advance_activity/3`).
+      "commentStamp" => "edited"
     }
   end
 

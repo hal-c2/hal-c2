@@ -241,12 +241,13 @@ defmodule HalC2.SourceControl do
   end
 
   # A pasted GitHub address names its repository: the scheme, query and one
-  # trailing ".git" are not part of the name ("acme/web.git/" and
-  # "https://github.com/acme/web.git?tab=readme" are both "acme/web", while
-  # "acme/web.git.git" is the repository "web.git"). A host other than
-  # github.com is kept ("github.example.com/acme/web"): `gh` reads
-  # HOST/OWNER/REPO as that host's repository, where OWNER/REPO alone would
-  # name one on its default host.
+  # trailing ".git" are not part of the name ("acme/web.git/" is
+  # "acme/web", while "acme/web.git.git" is the repository "web.git").
+  # Every host is kept, github.com included
+  # ("https://github.com/acme/web.git?tab=readme" is
+  # "github.com/acme/web"): `gh` reads HOST/OWNER/REPO as that host's
+  # repository, where OWNER/REPO alone would name one on its default
+  # host — GH_HOST's, or a sole Enterprise login's.
   defp github_repository_name(repository) when is_binary(repository) do
     path =
       repository
@@ -260,7 +261,7 @@ defmodule HalC2.SourceControl do
       [host, owner, repo | _] when is_binary(host) ->
         if String.contains?(host, ".") do
           repo = String.replace_suffix(repo, ".git", "")
-          if host == "github.com", do: "#{owner}/#{repo}", else: "#{host}/#{owner}/#{repo}"
+          "#{host}/#{owner}/#{repo}"
         else
           "#{host}/#{String.replace_suffix(owner, ".git", "")}"
         end

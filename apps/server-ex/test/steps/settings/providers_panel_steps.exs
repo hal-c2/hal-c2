@@ -91,7 +91,46 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
         World.call(context, "server.searchAcpRegistry", %{"query" => query})
       end)
 
-    Map.put(context, :reply, reply)
+    listing =
+      case reply do
+        {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
+        other -> flunk("the ACP Registry search did not succeed: #{inspect(other)}")
+      end
+
+    context |> Map.put(:reply, reply) |> Map.put(:listing, listing)
+  end
+
+  # Entered by hand: preparing the agent by its id still installs it, and an
+  # instance added from it still runs (the fake ACP agent answers for it).
+  step "{string} can still be entered by hand, and an instance already added from it keeps working",
+       %{args: [agent]} = context do
+    {{:ok, %{"agentId" => ^agent, "prepared" => true}}, context} =
+      World.call(context, "server.prepareAcpRegistryAgent", %{"agentId" => agent})
+
+    instance = "twin-#{agent}"
+    commands = Application.get_env(:hal_c2, :acp_commands, %{})
+    World.put_app_env(:acp_commands, Map.put(commands, instance, ["python3", "-u", @fake_acp]))
+    HalC2.Acp.forget(instance)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget(instance) end)
+
+    context =
+      World.update_settings(context, %{
+        "providerInstances" => %{
+          instance => %{
+            "driver" => "acpRegistry",
+            "displayName" => agent,
+            "config" => %{"agentId" => agent},
+            "environment" => [
+              %{"name" => "FAKE_ACP_STATE", "value" => context.acp_state},
+              %{"name" => "FAKE_AUTH_FILE", "value" => context.acp_auth}
+            ]
+          }
+        }
+      })
+
+    :ok = HalC2.Acp.reload(instance)
+    assert %{"models" => [_ | _]} = HalC2.Acp.entry(instance)
+    context
   end
 
   # "gemini-mac" has no build for this machine; "atlas" does not match.
@@ -360,7 +399,17 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
             "uvx" => %{"package" => "lite-gemini==1.2.3"}
           }),
           agent.("gemini-cli", "Gemini CLI", "Google's agent", binary.(here)),
-          agent.("atlas", "Atlas", "Maps", binary.(here))
+          agent.("atlas", "Atlas", "Maps", binary.(here)),
+          # Twins of providers HAL-C2 carries itself: search must not offer
+          # them, but each still installs by id (the same fake binary).
+          agent.("codex-acp", "Codex ACP", "Codex as an ACP agent", binary.(here)),
+          agent.("claude-acp", "Claude ACP", "Claude as an ACP agent", binary.(here)),
+          agent.("cursor", "Cursor", "Cursor as an ACP agent", binary.(here)),
+          agent.("grok-build", "Grok Build", "Grok as an ACP agent", binary.(here)),
+          agent.("opencode", "OpenCode", "OpenCode as an ACP agent", binary.(here)),
+          agent.("opencode-v2", "OpenCode V2", "OpenCode as an ACP agent", binary.(here)),
+          agent.("pi-acp", "Pi ACP", "Pi as an ACP agent", binary.(here)),
+          agent.("antigravity-acp", "Antigravity ACP", "A Gemini ACP agent", binary.(here))
         ]
       })
     )

@@ -146,6 +146,13 @@
       "description": "Review a pull request again when its head changes after a review."
     },
     {
+      "key": "reviewRebases",
+      "label": "Review rebases",
+      "type": "boolean",
+      "default": false,
+      "description": "Review a new push again even when it only rebases the change already reviewed."
+    },
+    {
       "key": "concurrency",
       "label": "Reviews at once",
       "type": "number",

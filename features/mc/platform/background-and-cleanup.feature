@@ -101,7 +101,7 @@ Feature: Background work and storage cleanup on the MC
     When the host reports it is locked
     Then the MC pauses periodic git and provider refreshes
 
-  @backlog @mc
+  @mc
   Scenario Outline: A host under strain pauses background work whatever the profile
     Given a client in front shows a checkout and provider status
     When the host reports <state>

@@ -6,7 +6,8 @@ defmodule HalC2.CodeReviewPropTest do
   over a fake `GIT_SSH_COMMAND`, and the fake Codex, whose review turns stay open.
 
   Three pull requests (`acme/api#1`, `acme/api#2`, `acme/web#1`) each have two head
-  commits to push between. The commands open and close them, push, break a head so its
+  commits to push between, and the same two rebased onto a newer `main`. The commands
+  open and close them, push, rebase, break a head so its
   checkout fails, turn Codex off so a review's thread is refused once it is checked
   out, keep every review in a sandbox or review trusted pull requests here (the
   sandbox, which this MC with no OpenShell cannot open, fails the review once it is
@@ -55,6 +56,10 @@ defmodule HalC2.CodeReviewPropTest do
     began with says nothing of another trigger label saved meanwhile;
   - an automatic review of a pull request nobody trusted waits for the user, as a draft
     does;
+  - a new push that only rebased the change a review published or kept, under settings
+    that review new pushes but not rebases, carries that review to the new head: no
+    thread, no post, and no start the review limits count; a push that changes it is
+    reviewed again, as is a rebase while rebases are reviewed;
   - a draft saved before reports were made safe (`age/1`) is shown with its mentions,
     images and markup neutralised once the plugin loads it, and is neither previewed
     nor posted until it is reviewed again;
@@ -260,6 +265,38 @@ defmodule HalC2.CodeReviewPropTest do
     ])
   end
 
+  # A push that only rebased a kept review carries it with no thread and no start the
+  # limits count, so the push after it, which changes the change, still has room under
+  # a limit of two a repository and is reviewed.
+  test "a rebase carries a kept review, and a push after it is reviewed" do
+    replay(carried_then_pushed([]))
+  end
+
+  # The same with the carried run held at its fetch, where a snapshot showed its thread
+  # id before the carry gave the review its old thread back.
+  test "a rebase held at its fetch carries the review too" do
+    replay(carried_then_pushed(hold: true))
+  end
+
+  defp carried_then_pushed(opts) do
+    {hold, release} = if opts[:hold], do: {[{:hold, [true]}], [{:hold, [false]}]}, else: {[], []}
+
+    [
+      {:save, [{"reviewNewPushes", true}]},
+      {:save, [{"publishing", "local"}]},
+      {:start, ["acme/api#1"]},
+      {:report, [{"acme/api#1", 1}, :approve]},
+      {:rebase, ["acme/api#1"]}
+    ] ++
+      hold ++
+      [{:refresh, []}] ++
+      release ++
+      [
+        {:push, ["acme/api#1"]},
+        {:refresh, []}
+      ]
+  end
+
   defp replay(steps) do
     Process.flag(:trap_exit, true)
 
@@ -427,6 +464,8 @@ defmodule HalC2.CodeReviewPropTest do
         concurrency: 2,
         activation: "selective",
         new_pushes: false,
+        # Whether a push that only rebases a reviewed change is reviewed again.
+        rebases: false,
         display: "threads",
         # The reviews' model; another has a usage limit of its own.
         model: "fake/one",
@@ -474,6 +513,8 @@ defmodule HalC2.CodeReviewPropTest do
       held_pubs: [],
       waiting_pubs: [],
       crashes: 0,
+      # How many runs were carried (`resolve/3`), for `contested?/2`.
+      carries: 0,
       seq: 0,
       paused: false,
       failures: 0,
@@ -564,6 +605,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     always = [
       {3, {:call, __MODULE__, :push, [key]}},
+      {2, {:call, __MODULE__, :rebase, [key]}},
       {2, {:call, __MODULE__, :distrust, [key]}},
       {2, {:call, __MODULE__, :comment, [key]}},
       {1, {:call, __MODULE__, :label, [key]}},
@@ -582,6 +624,7 @@ defmodule HalC2.CodeReviewPropTest do
             {"concurrency", oneof([1, 2])},
             {"activation", oneof(~w(automatic selective))},
             {"reviewNewPushes", boolean()},
+            {"reviewRebases", boolean()},
             {"display", oneof(~w(page threads both))},
             {"model", oneof(~w(fake/one fake/two))},
             {"reviewTrustedOnThisMachine", boolean()},
@@ -641,7 +684,10 @@ defmodule HalC2.CodeReviewPropTest do
     do: m.enabled and heading != m.settings.heading
 
   defp allowed?(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
-  defp allowed?(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
+
+  defp allowed?(m, {:call, _, cmd, [key]}) when cmd in [:push, :rebase],
+    do: not m.prs[key].broken
+
   defp allowed?(_m, _call), do: true
 
   def next_state(m, _result, call), do: %{elem(step(m, call), 0) | tried: []}
@@ -902,11 +948,11 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :limited, [{key, k}]}) do
     case m.reviews[key] do
       %{run: ^k, status: :running, model: model} when model != m.settings.model ->
-        {m |> queue(key, m.reviews[key].asked) |> pump(), nil}
+        {m |> queue(key, m.reviews[key].asked, m.reviews[key].pushed) |> pump(), nil}
 
       %{run: ^k, status: :running} ->
         {%{
-           queue(m, key, m.reviews[key].asked)
+           queue(m, key, m.reviews[key].asked, m.reviews[key].pushed)
            | paused: true,
              failures: 0,
              pause_text:
@@ -953,6 +999,7 @@ defmodule HalC2.CodeReviewPropTest do
         "concurrency" => :concurrency,
         "activation" => :activation,
         "reviewNewPushes" => :new_pushes,
+        "reviewRebases" => :rebases,
         "display" => :display,
         "model" => :model,
         "reviewsPerAuthorPerDay" => :per_author,
@@ -991,7 +1038,10 @@ defmodule HalC2.CodeReviewPropTest do
     do: {update_pr(m, key, &%{&1 | labeled: not &1.labeled, edits: &1.edits + 1}), :ok}
 
   defp step(m, {:call, _, :push, [key]}),
-    do: {update_pr(m, key, &%{&1 | head: 3 - &1.head}), :ok}
+    do: {update_pr(m, key, &%{&1 | head: pushed(&1.head)}), :ok}
+
+  defp step(m, {:call, _, :rebase, [key]}),
+    do: {update_pr(m, key, &%{&1 | head: rebased(&1.head)}), :ok}
 
   defp step(m, {:call, _, :distrust, [key]}),
     do: {update_pr(m, key, &%{&1 | trusted: not &1.trusted, edits: &1.edits + 1}), :ok}
@@ -1025,7 +1075,7 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :hold, [false]}) do
     held = m.held_runs
     m = %{m | hold: false, held_runs: []}
-    {Enum.reduce(held, m, fn {key, k}, m -> resolve(m, key, k) end), :ok}
+    {Enum.reduce(held, m, fn {key, k}, m -> resolve(m, key, k, true) end), :ok}
   end
 
   # What asking for `key` reads of who stands behind it, for the trigger label as it is
@@ -1041,7 +1091,10 @@ defmodule HalC2.CodeReviewPropTest do
   defp ask_queued(m, key) do
     case m.reviews[key] do
       %{status: :queued} = r ->
-        %{put_review(m, key, %{r | asked: true, followed: true, now: m.seq + 1}) | seq: m.seq + 1}
+        %{
+          put_review(m, key, %{r | asked: true, followed: true, now: m.seq + 1, pushed: false})
+          | seq: m.seq + 1
+        }
 
       _ ->
         m
@@ -1101,9 +1154,25 @@ defmodule HalC2.CodeReviewPropTest do
       model: nil,
       limited: nil,
       # Whether its findings were saved before reports were made safe.
-      old: false
+      old: false,
+      # Whether the look queued it for a new push (`queue/4`), the review a push that
+      # only rebased it carries over (its status, run, reviewed head, verdict, comments
+      # and post error, as `queue/4` last found it with a verdict), and whether its last run was
+      # carried, which left it no checkout.
+      pushed: false,
+      prev: nil,
+      carried: false
     }
   end
+
+  # The head a push moves to, on the same base, and the same change rebased onto the
+  # other: the heads 1 and 2 are on the first commit of `main`, 3 and 4 on its second,
+  # and a head's change is `patch/1`.
+  defp pushed(h) when h <= 2, do: 3 - h
+  defp pushed(h), do: 7 - h
+  defp rebased(h) when h <= 2, do: h + 2
+  defp rebased(h), do: h - 2
+  defp patch(h), do: rem(h - 1, 2) + 1
 
   defp moved_on(%{approved: approved} = r, head) when approved != nil and approved != head do
     r = %{r | approved: nil}
@@ -1146,8 +1215,14 @@ defmodule HalC2.CodeReviewPropTest do
 
   # `asked`: whether the user asked for it (a start, a retry or an approval), so the
   # review limits count it but never hold it back; the watch's own are held back.
-  defp queue(m, key, asked) do
+  # `pushed`: whether the look queued it for a new push, which a rebase may carry.
+  defp queue(m, key, asked, pushed \\ false) do
     r = m.reviews[key]
+
+    prev =
+      if r.verdict != nil,
+        do: Map.take(r, [:status, :run, :reviewed, :verdict, :comments, :publish_error]),
+        else: r.prev
 
     review = %{
       r
@@ -1162,7 +1237,9 @@ defmodule HalC2.CodeReviewPropTest do
         comments: [],
         publish_error: false,
         changed: false,
-        old: false
+        old: false,
+        pushed: pushed,
+        prev: prev
     }
 
     %{put_review(m, key, review) | seq: m.seq + 1}
@@ -1228,7 +1305,7 @@ defmodule HalC2.CodeReviewPropTest do
 
             m
             |> put_review(key, %{known | seen: pr.head})
-            |> queue(key, false)
+            |> queue(key, false, true)
             |> then(&if(labeled, do: follow(&1, key), else: &1))
 
           true ->
@@ -1284,9 +1361,12 @@ defmodule HalC2.CodeReviewPropTest do
                now: nil,
                model: m.settings.model,
                run: length(runs),
-               launched: {r.trusted, r.approved, m.settings.here},
+               launched:
+                 {r.trusted, r.approved, m.settings.here,
+                  m.settings.new_pushes and not m.settings.rebases},
                started: m.tick,
-               stopped: false
+               stopped: false,
+               carried: false
            }), held}
         end
       end)
@@ -1298,7 +1378,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     if m.hold,
       do: %{m | held_runs: m.held_runs ++ started},
-      else: Enum.reduce(started, m, fn {key, k}, m -> resolve(m, key, k) end)
+      else: Enum.reduce(started, m, fn {key, k}, m -> resolve(m, key, k, false) end)
   end
 
   # The review limits a start of `key` goes over, each `{repository, starts, limit}`
@@ -1347,8 +1427,14 @@ defmodule HalC2.CodeReviewPropTest do
           repo == nil or elem(@prs[other], 0) == repo,
           do: key
 
+    # Nor which a limit counts while a run is carried, which takes its start back only
+    # once its checkout is fetched.
+    carried =
+      after_call.carries > m.carries and
+        (m.settings.per_author > 0 or m.settings.per_repository > 0)
+
     length(tried) > 1 and
-      (late != [] or
+      (carried or late != [] or
          Enum.any?(buckets, fn {limit, members, count} ->
            room = limit - count
 
@@ -1358,16 +1444,41 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # Run `k` of `key` gets past the fetch: a broken head fails it, any other is checked
-  # out as it is now and gets the run's thread.
-  defp resolve(m, key, k) do
+  # out as it is now and gets the run's thread. `seen`: whether a snapshot showed the
+  # run, held at its fetch.
+  defp resolve(m, key, k, seen) do
     case m.reviews[key] do
       %{status: :running, run: ^k} = r ->
-        {trusted, approved, here} = r.launched
+        {trusted, approved, here, carry} = r.launched
+        head = m.prs[key].head
 
         cond do
           # Nobody trusted, it is checked out only at the head the user approved.
           m.prs[key].broken or (not trusted and approved != m.prs[key].head) ->
             m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
+
+          # A new push that only rebased the change its review published or kept, under
+          # settings that review new pushes but not rebases, is that review, carried to
+          # the head with no thread, nothing posted and no start counted.
+          carry and r.pushed and match?(%{status: s} when s in [:published, :kept], r.prev) and
+            r.prev.reviewed != head and patch(r.prev.reviewed) == patch(head) ->
+            {repo, _} = @prs[key]
+            runs = if seen, do: m.runs[key], else: List.delete_at(m.runs[key], k - 1)
+
+            r =
+              Map.merge(r, r.prev)
+              |> Map.merge(%{reviewed: head, carried: true, pushed: false, changed: false})
+
+            r = %{r | past: List.delete(r.past, r.run)}
+
+            %{
+              m
+              | runs: Map.put(m.runs, key, runs),
+                starts: Map.update!(m.starts, repo, &(&1 - 1)),
+                carries: m.carries + 1
+            }
+            |> put_review(key, r)
+            |> pump()
 
           # And runs in a sandbox (#1412), as every review does unless the settings it
           # started under review trusted ones here, which this MC, with no OpenShell,
@@ -1539,7 +1650,7 @@ defmodule HalC2.CodeReviewPropTest do
   # stopped or discarded.
   defp checkouts(m) do
     Enum.count(m.reviews, fn {key, r} ->
-      r.run != nil and not r.stopped and Enum.at(m.runs[key], r.run - 1)
+      r.run != nil and not r.stopped and not r.carried and Enum.at(m.runs[key], r.run - 1)
     end)
   end
 
@@ -1962,7 +2073,26 @@ defmodule HalC2.CodeReviewPropTest do
     world = Process.get(:cr_world)
     pr = world.prs[key]
     {repo, number} = @prs[key]
-    head = 3 - pr.head
+    head = pushed(pr.head)
+
+    git!(fx_dir(), [
+      "--git-dir",
+      bare(repo),
+      "update-ref",
+      "refs/pull/#{number}/head",
+      sha(key, head)
+    ])
+
+    put_world(put_in(world.prs[key].head, head))
+    observe(:ok)
+  end
+
+  # The same change, rebased onto the other commit of `main`.
+  def rebase(key) do
+    world = Process.get(:cr_world)
+    pr = world.prs[key]
+    {repo, number} = @prs[key]
+    head = rebased(pr.head)
 
     git!(fx_dir(), [
       "--git-dir",
@@ -2143,7 +2273,12 @@ defmodule HalC2.CodeReviewPropTest do
 
   # The starts the plugin counts toward the review limits, by repository, each once.
   defp starts do
-    rows = apply(@server, :starts, []) |> Enum.uniq_by(& &1["id"])
+    # A carried start is kept, but counts toward no limit.
+    rows =
+      apply(@server, :starts, [])
+      |> Enum.uniq_by(& &1["id"])
+      |> Enum.reject(&(&1["carried"] == true))
+
     # When each started, for the time a review held back has room again (`room_at/1`).
     Process.put(:cr_start_rows, rows)
     Enum.frequencies_by(rows, fn %{"repository" => "acme/" <> repo} -> repo end)
@@ -2843,7 +2978,8 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # The fake remotes: `acme/api` and `acme/web`, each pull request with two head
-  # commits off `main` that change `src/limits.ts`. Both have `acme/lib` as their
+  # commits that change `src/limits.ts` off the first commit of `main` (1 and 2),
+  # and the same two changes rebased onto its second (3 and 4). Both have `acme/lib` as their
   # submodule `lib`, so the two of acme/api share a store of it. Returns `{key, i}` → sha.
   defp remotes(fx) do
     lib_bare = Path.join([fx, "remotes", "acme", "lib.git"])
@@ -2876,16 +3012,21 @@ defmodule HalC2.CodeReviewPropTest do
         git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{lib_sha},lib"])
 
         git!(seed, ["commit", "-q", "-m", "Start"])
+        start = git!(seed, ["rev-parse", "HEAD"])
+        File.write!(Path.join(seed, "NOTES.md"), "Notes.\n")
+        git!(seed, ["add", "NOTES.md"])
+        git!(seed, ["commit", "-q", "-m", "Notes"])
         git!(seed, ["push", "-q", bare, "main:main"])
 
-        for {key, {^repo, number}} <- @prs, i <- 1..2, reduce: shas do
+        for {key, {^repo, number}} <- @prs, i <- 1..4, reduce: shas do
           shas ->
-            git!(seed, ["checkout", "-q", "--detach", "main"])
+            git!(seed, ["checkout", "-q", "--detach", if(i <= 2, do: start, else: "main")])
+            change = rem(i - 1, 2) + 1
             File.mkdir_p!(Path.join(seed, "src"))
 
             File.write!(
               Path.join(seed, "src/limits.ts"),
-              "export const limit = #{number}#{i};\nexport const name = \"#{repo} #{i}\";\n"
+              "export const limit = #{number}#{change};\nexport const name = \"#{repo} #{change}\";\n"
             )
 
             git!(seed, ["add", "src/limits.ts"])

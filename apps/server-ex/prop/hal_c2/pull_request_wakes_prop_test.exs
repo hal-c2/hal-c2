@@ -26,7 +26,13 @@ defmodule HalC2.PullRequestWakesPropTest do
   - a link subscribed to some kinds of news (`notify`) wakes the thread only for those;
     the rest is heard without a wake, and is not told once it subscribes again, while
     news of a kind it is subscribed to stays to be told, a review beside a comment
-    included; subscribing to a kind hears what of it was not told yet.
+    included; subscribing to a kind hears what of it was not told yet;
+  - comment activity in a snapshot carrying the edit stamp is stamped when it was
+    last edited, not when it was posted: a link heard before snapshots carried the
+    stamp is re-baselined by its first stamped snapshot, so an edit from before the
+    stamp never wakes it, and an edit after it does, even mid-subscription-change.
+    Generated syncs carry the stamp or not, and may carry an edit of the newest
+    comment instead of a post, so unstamped-to-stamped sequences are exercised.
   """
 
   use ExUnit.Case, async: false
@@ -47,6 +53,10 @@ defmodule HalC2.PullRequestWakesPropTest do
   # What a sync can bring that is numbered by when it was posted, none of it at first.
   @posted [:review, :comment, :own_review, :own_comment, :rem]
   @none Map.new(@posted, &{&1, 0})
+  # An edit of the newest comment of each side, numbered as a post is: what a
+  # stamped snapshot times that comment by instead of when it was posted.
+  @edits [:comment_edit, :own_comment_edit]
+  @timed @posted ++ @edits
 
   property "a thread is woken once for each change of a pull request it owns",
     numtests: HalC2.Prop.numtests(300),
@@ -94,7 +104,10 @@ defmodule HalC2.PullRequestWakesPropTest do
       busy: false,
       runs: 0,
       clock: 0,
-      during: MapSet.new()
+      during: MapSet.new(),
+      # Whether a sync has carried the comment edit stamp yet: snapshots gain
+      # it at the upgrade and keep it, as the MC's own reads do.
+      upgraded: false
     }
 
   def command(state) do
@@ -131,11 +144,14 @@ defmodule HalC2.PullRequestWakesPropTest do
   # else and by the signed-in account, and the newest removal from the merge queue:
   # at most one of them new, the rest as last time.
   defp sync_call(state, linked) do
-    let [n, s, checks, merge, posted] <- [
+    let [n, s, checks, merge, stamped, posted] <- [
           oneof(linked),
           frequency([{6, "open"}, {1, "merged"}, {1, "closed"}]),
           oneof([nil, "pending", "failing", "passing"]),
           oneof(["mergeable", "conflicting", "unknown"]),
+          # An upgrade lands at some sync: before it snapshots are unstamped,
+          # from it on they carry the stamp.
+          if(state.upgraded, do: oneof([true]), else: frequency([{1, true}, {3, false}])),
           # Mostly someone else's review or comment, so both often land before a check.
           frequency([
             {1, nil},
@@ -143,17 +159,31 @@ defmodule HalC2.PullRequestWakesPropTest do
             {3, :comment},
             {1, :own_review},
             {1, :own_comment},
-            {1, :rem}
+            {1, :rem},
+            {2, :comment_edit},
+            {1, :own_comment_edit}
           ])
         ] do
-      last = snapshot_of(state, n) || @none
+      previous = snapshot_of(state, n)
+      last = previous || @none
 
       posts =
         Map.new(@posted, fn key ->
           {key, if(posted == key, do: state.clock + 1, else: last[key])}
         end)
 
-      {:call, __MODULE__, :sync, [n, Map.merge(%{state: s, checks: checks, merge: merge}, posts)]}
+      edits =
+        Map.new(@edits, fn key ->
+          {key, if(posted == key, do: state.clock + 1, else: (previous && previous[key]) || 0)}
+        end)
+
+      {:call, __MODULE__, :sync,
+       [
+         n,
+         %{state: s, checks: checks, merge: merge, stamped: stamped}
+         |> Map.merge(posts)
+         |> Map.merge(edits)
+       ]}
     end
   end
 
@@ -185,11 +215,13 @@ defmodule HalC2.PullRequestWakesPropTest do
   # A sync is of a link that is there, and its activity is never older than the last,
   # with at most one of them new.
   def precondition(state, {:call, _, :sync, [n, snapshot]}) do
-    last = snapshot_of(state, n) || @none
+    previous = snapshot_of(state, n)
+    last = fn key -> (previous && previous[key]) || 0 end
     new = state.clock + 1
 
-    n in linked(state) and Enum.all?(@posted, &(snapshot[&1] in [new, last[&1]])) and
-      Enum.count(@posted, &(snapshot[&1] == new)) <= 1
+    n in linked(state) and
+      Enum.all?(@timed, &(snapshot[&1] in [new, last.(&1)])) and
+      Enum.count(@timed, &(snapshot[&1] == new)) <= 1
   end
 
   # The MC refuses to settle a thread with work running, and to settle or unsettle an
@@ -236,12 +268,15 @@ defmodule HalC2.PullRequestWakesPropTest do
       end)
 
     own_new =
-      for key <- [:own_review, :own_comment], snapshot[key] > state.clock, do: snapshot[key]
+      for at <- [effective(snapshot, :own_review), effective(snapshot, :own_comment)],
+          at > state.clock,
+          do: at
 
     %{
       state
       | links: links,
-        clock: Enum.max([state.clock | Enum.map(@posted, &snapshot[&1])]),
+        upgraded: state.upgraded or snapshot.stamped,
+        clock: Enum.max([state.clock | Enum.map(@timed, &snapshot[&1])]),
         during:
           if(state.busy, do: MapSet.union(state.during, MapSet.new(own_new)), else: state.during)
     }
@@ -281,7 +316,44 @@ defmodule HalC2.PullRequestWakesPropTest do
     {heard, pending} = Enum.split_with(news(state, told, snapshot), &(event(&1) in enabled))
     kept = pending |> Enum.flat_map(&fields/1) |> Map.new(&{&1, told[&1]})
     told = told |> advance(snapshot, heard) |> Map.merge(kept)
+
+    # The restored comment time is the baselined one: the stamp it came with
+    # did not baseline it.
+    told =
+      if Map.has_key?(kept, :comment),
+        do: %{told | stamped: link.told.stamped},
+        else: told
+
     %{link | told: told, notify: notify}
+  end
+
+  # A comment's time in a snapshot: under the edit stamp, when it was last
+  # edited; before it, when it was posted. Reviews are never restamped.
+  defp effective(snapshot, :comment),
+    do:
+      if(snapshot.stamped,
+        do: max(snapshot.comment, snapshot.comment_edit),
+        else: snapshot.comment
+      )
+
+  defp effective(snapshot, :own_comment),
+    do:
+      if(snapshot.stamped,
+        do: max(snapshot.own_comment, snapshot.own_comment_edit),
+        else: snapshot.own_comment
+      )
+
+  defp effective(snapshot, kind), do: snapshot[kind]
+
+  # The news a check can tell of: a link heard before comment edits were
+  # stamped, read against its first stamped snapshot, is re-baselined for
+  # comments by that read, so an edit from before the stamp is no news.
+  defp told_news(state, told, snapshot) do
+    news = news(state, told, snapshot)
+
+    if told.stamped or not snapshot.stamped,
+      do: news,
+      else: Enum.reject(news, &(&1 == {:activity, :comment}))
   end
 
   defp events(nil), do: Wakes.events()
@@ -299,13 +371,17 @@ defmodule HalC2.PullRequestWakesPropTest do
   defp hear(_state, %{snapshot: nil} = link), do: link
 
   defp hear(_state, %{told: nil, snapshot: snapshot} = link),
-    do: %{link | told: advance(%{failed: false, review: 0, comment: 0, rem: 0}, snapshot, [])}
+    do: %{
+      link
+      | told:
+          advance(%{failed: false, review: 0, comment: 0, rem: 0, stamped: false}, snapshot, [])
+    }
 
   defp hear(state, link) when state.settled or state.archived, do: link
   defp hear(state, link) when state.delegated and not state.busy, do: link
 
   defp hear(state, %{told: told, snapshot: snapshot} = link) do
-    news = news(state, told, snapshot)
+    news = told_news(state, told, snapshot)
 
     case subscribed(link, news) do
       [] -> %{link | told: advance(told, snapshot, news)}
@@ -330,8 +406,14 @@ defmodule HalC2.PullRequestWakesPropTest do
       merge: if(snapshot.merge == "unknown", do: told[:merge], else: snapshot.merge),
       failed: failed,
       review: Enum.max([told.review, snapshot.review, snapshot.own_review]),
-      comment: Enum.max([told.comment, snapshot.comment, snapshot.own_comment]),
-      rem: Enum.max([told.rem, snapshot.rem])
+      comment:
+        Enum.max([
+          told.comment,
+          effective(snapshot, :comment),
+          effective(snapshot, :own_comment)
+        ]),
+      rem: Enum.max([told.rem, snapshot.rem]),
+      stamped: told.stamped or snapshot.stamped
     }
   end
 
@@ -348,11 +430,15 @@ defmodule HalC2.PullRequestWakesPropTest do
       |> Enum.map(fn {kind, _} -> {:activity, kind} end)
     end
 
-    others = activity.([review: snapshot.review, comment: snapshot.comment], fn _ -> true end)
+    others =
+      activity.(
+        [review: snapshot.review, comment: effective(snapshot, :comment)],
+        fn _ -> true end
+      )
 
     own =
       activity.(
-        [review: snapshot.own_review, comment: snapshot.own_comment],
+        [review: snapshot.own_review, comment: effective(snapshot, :own_comment)],
         &(&1 not in state.during)
       )
 
@@ -387,7 +473,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   defp pending(state) do
     for {n, %{told: told, snapshot: snapshot} = link} <- state.links,
         told != nil and snapshot != nil,
-        news = subscribed(link, news(state, told, snapshot)),
+        news = subscribed(link, told_news(state, told, snapshot)),
         news != [],
         do: {n, news}
   end
@@ -520,8 +606,10 @@ defmodule HalC2.PullRequestWakesPropTest do
   # What `HalC2.PullRequests.Sync` writes of what the host said; the signed-in account
   # is monalisa.
   def sync(n, snapshot) do
-    activities = activities(snapshot.review, snapshot.comment, "owner-1")
-    own = activities(snapshot.own_review, snapshot.own_comment, "monalisa")
+    activities =
+      activities(snapshot.review, effective(snapshot, :comment), "owner-1")
+
+    own = activities(snapshot.own_review, effective(snapshot, :own_comment), "monalisa")
 
     removal =
       if snapshot.rem > 0,
@@ -533,22 +621,24 @@ defmodule HalC2.PullRequestWakesPropTest do
         "host" => "github.com",
         "repository" => "acme/app",
         "number" => n,
-        "snapshot" => %{
-          "state" => snapshot.state,
-          "title" => "PR #{n}",
-          "isDraft" => false,
-          "updatedAt" => at(0),
-          "mergedAt" => if(snapshot.state == "merged", do: at(0)),
-          "closedAt" => if(snapshot.state in ["merged", "closed"], do: at(0)),
-          "checksState" => snapshot.checks,
-          "mergeability" => snapshot.merge,
-          "activity" => List.last(activities),
-          "ownActivity" => List.last(own),
-          "activities" => activities,
-          "ownActivities" => own,
-          "mergeQueue" => nil,
-          "mergeQueueRemoval" => removal
-        },
+        "snapshot" =>
+          %{
+            "state" => snapshot.state,
+            "title" => "PR #{n}",
+            "isDraft" => false,
+            "updatedAt" => at(0),
+            "mergedAt" => if(snapshot.state == "merged", do: at(0)),
+            "closedAt" => if(snapshot.state in ["merged", "closed"], do: at(0)),
+            "checksState" => snapshot.checks,
+            "mergeability" => snapshot.merge,
+            "activity" => List.last(activities),
+            "ownActivity" => List.last(own),
+            "activities" => activities,
+            "ownActivities" => own,
+            "mergeQueue" => nil,
+            "mergeQueueRemoval" => removal
+          }
+          |> then(&if(snapshot.stamped, do: Map.put(&1, "commentStamp", "edited"), else: &1)),
         "stack" => nil
       })
     end)

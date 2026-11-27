@@ -1402,8 +1402,13 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   end
 
   step "it fails saying {string}", %{args: [message]} = context do
-    assert {:error, error, _} = context.reply
-    assert error == message
+    # An MCP tool's failure (`context.mcp_result`, the MCP steps' outcome)
+    # or an RPC's (`context.reply`), whichever the scenario last ran.
+    case context[:mcp_result] do
+      {:error, _code, said} -> assert said == message
+      _other -> assert {:error, ^message, _} = context.reply
+    end
+
     context
   end
 

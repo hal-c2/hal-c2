@@ -14,7 +14,8 @@ defmodule HalC2.PullRequests.SubscriptionsTest do
     "checksState" => "passing",
     "mergeability" => "mergeable",
     "checksFailed" => false,
-    "activityAt" => nil
+    "activityAt" => nil,
+    "commentEditAt" => nil
   }
 
   defp link(notify, snapshot) do
@@ -135,6 +136,22 @@ defmodule HalC2.PullRequests.SubscriptionsTest do
     assert {_, _, [{_, [{:activity, @review}]}]} = Wakes.hear([every], false, true)
 
     assert Wakes.resubscribe(waiting, ["reviews"])["heard"] == @heard
+  end
+
+  # Restoring a pending comment on a link heard before comment edits were
+  # stamped must not stamp it from that edit: the next hear would tell the
+  # historical edit instead of re-baselining it.
+  test "resubscribing a link without the comment edit marker does not stamp it" do
+    legacy =
+      %{@heard | "activityAt" => @review["at"]}
+      |> Map.delete("commentEditAt")
+
+    snapshot = Map.put(both(@review, @comment), "commentStamp", "edited")
+    link = %{link(["comments"], snapshot) | "heard" => legacy}
+
+    resubscribed = Wakes.resubscribe(link, ["comments", "checks"])
+    refute Map.has_key?(resubscribed["heard"], "commentEditAt")
+    assert {_, _, []} = Wakes.hear([resubscribed], false, true)
   end
 
   test "notify names known kinds in their order, and refuses others" do

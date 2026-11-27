@@ -12,10 +12,10 @@ defmodule HalC2.SnoozeWakePropTest do
   - snoozing is refused exactly while a queued run carries the user's own message; a
     queued wake of the agent's does not stop it;
   - a snoozed thread is awake to automatic settlement (`Settlement.blocker/2`) exactly
-    when its latest run both began and ended after the snooze; a run that began before
-    it and fails or finishes later (a late failure) leaves the snooze alone, and so do a
-    run that was interrupted or cancelled and a wake the MC sent for the agent when it
-    finishes (its failure wakes the thread).
+    when its latest run both began and ended after the snooze and failed; a run that
+    began before it and fails or finishes later (a late failure) leaves the snooze
+    alone, and so do a run that finished, was interrupted or cancelled, and a wake the
+    MC sent for the agent when it finishes (its failure wakes the thread).
 
   The runs are written as the turn writer would leave them, with times placed against
   the snooze's own time stamp; no provider is behind them.
@@ -37,7 +37,7 @@ defmodule HalC2.SnoozeWakePropTest do
   @hour 3_600_000
   @half_hour 1_800_000
 
-  property "a snoozed thread wakes exactly when its latest run began and ended after the snooze",
+  property "a snoozed thread wakes exactly when its latest run began and failed after the snooze",
     numtests: HalC2.Prop.numtests(100),
     max_size: 40 do
     forall cmds <- commands(__MODULE__) do
@@ -168,15 +168,12 @@ defmodule HalC2.SnoozeWakePropTest do
   # of the run before it.
   defp latest(state), do: Enum.max_by(state.runs, & &1.ord, fn -> nil end)
 
-  # The model's answer to whether the snoozed thread is awake: its latest run completed or
-  # failed, and both its start and its end fall after this snooze.
+  # The model's answer to whether the snoozed thread is awake: its latest run failed,
+  # and both its start and its end fall after this snooze. A run that finishes is not
+  # news, a wake the MC sent for the agent included; its failure is.
   defp awake?(state) do
     case latest(state) do
-      # A wake the MC sent for the agent that finishes is not news; its failure is.
-      %{status: :completed, kind: kind} when kind in [:notification, :delegated] ->
-        false
-
-      %{status: status, began: began, ended: ended} when status in [:completed, :failed] ->
+      %{status: :failed, began: began, ended: ended} ->
         began == state.epoch and ended == state.epoch
 
       _ ->

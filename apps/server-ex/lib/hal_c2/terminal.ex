@@ -701,7 +701,7 @@ defmodule HalC2.Terminal do
         failed(state, "No shell found (tried #{Enum.map_join(shells(), ", ", &hd/1)})")
 
       shell ->
-        argv = if command, do: shell ++ ["-ic", command], else: shell
+        argv = command_argv(shell, command)
 
         case :exec.run(argv, options) do
           {:ok, exec_pid, os_pid} ->
@@ -903,7 +903,42 @@ defmodule HalC2.Terminal do
   """
   def shell, do: Enum.find(shells(), &File.exists?(hd(&1)))
 
+  # How a startup command is handed to the shell that will run it: PowerShell
+  # takes `-Command`, cmd `/c`, and POSIX shells `-ic`. No command, no extras.
+  defp command_argv(shell, nil), do: shell
+
+  defp command_argv(shell, command) do
+    name =
+      shell
+      |> hd()
+      |> Path.basename()
+      |> String.downcase()
+      |> String.replace_suffix(".exe", "")
+
+    case name do
+      name when name in ["pwsh", "powershell"] -> shell ++ ["-Command", command]
+      "cmd" -> shell ++ ["/c", command]
+      _posix -> shell ++ ["-ic", command]
+    end
+  end
+
   defp shells do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> windows_shells()
+      _ -> posix_shells()
+    end
+  end
+
+  # PowerShell 7 first, then Windows PowerShell, then the command prompt:
+  # the first installed, by the name it is on the path under.
+  defp windows_shells do
+    for name <- ~w(pwsh powershell cmd),
+        path = System.find_executable(name),
+        path != nil,
+        do: [path]
+  end
+
+  defp posix_shells do
     requested = System.get_env("SHELL", "") |> String.split() |> List.first()
 
     [requested | Application.get_env(:hal_c2, :terminal_shells, @fallback_shells)]

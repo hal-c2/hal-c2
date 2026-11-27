@@ -223,13 +223,75 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   end
 
   step "the agent of {string} answers it", %{args: [caller]} = context do
-    [question] = requests(context, "user_input")
+    id =
+      context[:request_id] ||
+        hd(requests(context, "user_input"))["id"]
 
     tool(context, caller, "hal_c2_pending_request_respond", %{
       "threadId" => World.thread_id(context, context.asking),
-      "requestId" => question["id"],
+      "requestId" => id,
       "answers" => %{"color" => "Red"}
     })
+  end
+
+  # The question is over before the agent answers: the user answered it, it
+  # expired when the MC restarted, or it was dismissed. Its id is kept, since
+  # it is pending no more.
+  step "the user already answered it", context do
+    context = stash_question(context)
+
+    context =
+      World.command(context, %{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, context.asking),
+        "requestId" => context.request_id,
+        "answers" => %{"color" => "Blue"}
+      })
+
+    assert {:ok, _} = context.reply
+    await_request(context, "resolved")
+  end
+
+  step "it expired", context do
+    context = stash_question(context)
+    context = %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
+    context = await_request(context, "expired")
+
+    # The restart ended the caller's turn too; its agent is running again by
+    # the time it answers, as it was before.
+    context = World.send_turn(context, "caller", "wait for it")
+    World.await_row(World.thread_id(context, "caller"), &(&1["activeRunId"] != nil))
+    context
+  end
+
+  step "it was cancelled", context do
+    context = stash_question(context)
+
+    context =
+      World.command(context, %{
+        "type" => "thread.user-input.dismiss",
+        "threadId" => World.thread_id(context, context.asking),
+        "requestId" => context.request_id
+      })
+
+    assert {:ok, _} = context.reply
+    await_request(context, "cancelled")
+  end
+
+  defp stash_question(context) do
+    [question] = requests(context, "user_input")
+    Map.put(context, :request_id, question["id"])
+  end
+
+  defp await_request(context, status) do
+    World.await_state(context, context.asking, fn state ->
+      match?(
+        %{"status" => ^status},
+        StreamState.get(state, "runtime-request")[context.request_id]
+      )
+    end)
+
+    context
   end
 
   step "the turn of {string} continues with the answer", %{args: [thread]} = context do
