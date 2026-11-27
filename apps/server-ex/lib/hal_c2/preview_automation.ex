@@ -182,7 +182,7 @@ defmodule HalC2.PreviewAutomation do
   @doc "Why a timeout happened, from its `hostResponding`, as sentences to append."
   def timeout_cause(%{"hostResponding" => true}),
     do:
-      " The desktop is still answering, so the page is busy: its main thread is blocked or the action is still running. Check the page before repeating an action, and give the tool a longer timeoutMs (up to 60000) where it takes one."
+      " The desktop is still answering, so its connection is fine. The page may be busy (its main thread blocked or the action still running), or what the action waited for may never have appeared. Check the page before repeating an action, and give the tool a longer timeoutMs (up to 60000) where it takes one."
 
   def timeout_cause(%{"hostResponding" => false}),
     do:

@@ -237,7 +237,7 @@ defmodule HalC2.Steps.Preview.Automation do
        context do
     assert {:error, "PreviewAutomationTimeoutError", message} = context.result
     assert message =~ "Preview automation click timed out after 15000ms."
-    assert message =~ "The desktop is still answering, so the page is busy"
+    assert message =~ "The desktop is still answering, so its connection is fine"
     context
   end
 

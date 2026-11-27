@@ -533,7 +533,7 @@ defmodule HalC2.PreviewAutomationTest do
              Task.await(call)
 
     assert HalC2.PreviewAutomation.message(error) =~
-             "click timed out after 15000ms. The desktop is still answering, so the page is busy"
+             "click timed out after 15000ms. The desktop is still answering, so its connection is fine"
 
     refute_received {:hal_c2_preview_automation, _, "desk", :end}
 
