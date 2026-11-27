@@ -176,6 +176,7 @@ fn rows_news_does_not_exhaust_a_large_lists_script_heap() {
             token: "session".into(),
             label: "My MacBook".into(),
             environment_id: "env-1".into(),
+            expires_at: String::new(),
         },
     ));
 

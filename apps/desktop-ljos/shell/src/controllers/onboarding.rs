@@ -61,7 +61,7 @@ use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::{drafts, provider_settings};
 use crate::json::Json;
 use crate::mc::{Mc, SubId};
-use crate::session::Session;
+use crate::session::{Session, expires_text};
 use crate::sidebar_model::{format_iso, locale_compare, normalize_path, parse_iso};
 use crate::store;
 use hal_c2_mc::pairing::{self, Client, Outcome, Pairing};
@@ -737,6 +737,7 @@ impl Onboarding {
                     token: result.token.clone(),
                     label: said("label"),
                     environment_id: said("environmentId"),
+                    expires_at: expires_text(result.expires_at),
                 };
                 match crate::open(engine, &session) {
                     Ok(()) => return,

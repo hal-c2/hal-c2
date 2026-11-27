@@ -916,7 +916,7 @@ defmodule HalC2.OpenShell.Review do
     echo "base $(git merge-base HEAD refs/review/base || true)"
     """
 
-    with {:ok, tar} <- bundle(spec),
+    with {:ok, tar} <- bundle(spec, max(deadline - now(), 1) * 1000),
          upload =
            Client.upload(conn, name, Path.dirname(@bundle), {:file, tar},
              upload_timeout: max(deadline - now(), 1) * 1000
@@ -942,38 +942,49 @@ defmodule HalC2.OpenShell.Review do
 
   # A tar holding `review.bundle`, a git bundle of the review's two refs, in a
   # directory of its own the caller removes. The directory is the MC's temporary one
-  # and a unique integer; nothing a client or the agent sends names it.
+  # and a unique integer; nothing a client or the agent sends names it. Git runs in
+  # the clone as the plugin's own git does (`HalC2.Git.isolated/1`), and the bundle
+  # and its tar have `ms`, the review's own time limit, before they are given up and
+  # git killed with what it started.
   # sobelow_skip ["Traversal.FileModule"]
-  defp bundle(spec) do
+  defp bundle(spec, ms) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-review-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     file = Path.join(dir, Path.basename(@bundle))
     tar = Path.join(dir, "review.tar")
+    isolated = HalC2.Git.isolated(spec.clone)
+    until = System.monotonic_time(:millisecond) + ms
 
-    env = [
-      {"GIT_CONFIG_GLOBAL", "/dev/null"},
-      {"GIT_CONFIG_NOSYSTEM", "1"},
-      {"GIT_TERMINAL_PROMPT", "0"}
-    ]
+    bundled =
+      HalC2.Git.run(spec.clone, ["bundle", "create", "-q", file, spec.head_ref, spec.base_ref],
+        env: isolated[:env],
+        unset: isolated[:unset],
+        timeout: ms,
+        max_bytes: 65_536,
+        stop_children: {__MODULE__, dir}
+      )
 
-    case System.cmd("git", ["bundle", "create", "-q", file, spec.head_ref, spec.base_ref],
-           cd: spec.clone,
-           env: env,
-           stderr_to_stdout: true
-         ) do
-      {_, 0} ->
-        :ok =
-          :erl_tar.create(to_charlist(tar), [
-            {to_charlist(Path.basename(file)), to_charlist(file)}
-          ])
-
-        {:ok, tar}
-
-      {out, _} ->
+    with {:ok, %{status: 0}} <- bundled,
+         left = max(until - System.monotonic_time(:millisecond), 1),
+         {:ok, :ok} <-
+           HalC2.Git.within(left, fn ->
+             :erl_tar.create(to_charlist(tar), [
+               {to_charlist(Path.basename(file)), to_charlist(file)}
+             ])
+           end) do
+      {:ok, tar}
+    else
+      failed ->
         File.rm_rf(dir)
-        {:error, "The review's checkout could not be bundled: #{String.trim(out)}"}
+        {:error, "The review's checkout could not be bundled: #{bundle_error(failed)}"}
     end
   end
+
+  defp bundle_error({:ok, %{out: out, err: err}}), do: String.trim(out <> err)
+  defp bundle_error({:error, reason}) when is_binary(reason), do: reason
+  defp bundle_error({:ok, {:error, reason}}), do: inspect(reason)
+  defp bundle_error({:exit, reason}), do: "tar exited: #{inspect(reason)}"
+  defp bundle_error(:timeout), do: "it ran past the review's time limit."
 
   defp sha?(value),
     do: is_binary(value) and Regex.match?(~r/\A[0-9a-f]{40}([0-9a-f]{24})?\z/, value)

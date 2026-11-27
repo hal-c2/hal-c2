@@ -118,6 +118,7 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Shared,
         ),
         Registration::new::<pairing::Pairing>("pairing", &["pairing"], Scope::Shared),
+        Registration::new::<resume::ResumeConnection>("resume", &[], Scope::Shared),
         Registration::new::<scanner::Scanner>("scanner", &["scanner"], Scope::Shared),
     ]
 }

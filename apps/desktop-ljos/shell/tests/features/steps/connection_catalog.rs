@@ -195,6 +195,7 @@ fn pair_studio(world: &mut World) -> Outcome {
                 origin: link.origins.first().cloned().unwrap_or_default(),
                 token: STUDIO_SESSION.into(),
                 descriptor,
+                expires_at: None,
             }
         }));
     })?;

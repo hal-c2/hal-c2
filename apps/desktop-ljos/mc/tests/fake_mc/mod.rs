@@ -57,6 +57,10 @@ pub enum Seen {
     Exchange {
         form: String,
     },
+    /// A credential renewal was asked for, with its authorization.
+    Renew {
+        authorization: String,
+    },
 }
 
 enum Control {
@@ -272,6 +276,15 @@ fn answer(path: &str, request: &str, shared: &Shared) -> (u16, String) {
         }
         // A signed URL: its query is its authorization.
         "/attachments/a1.png?sig=ok" => (200, "png-bytes".to_owned()),
+        "/api/auth/session/renew" => {
+            shared.saw(Seen::Renew {
+                authorization: header(request, "authorization"),
+            });
+            (
+                200,
+                json!({"expiresAt": "2027-01-01T00:00:00Z"}).to_string(),
+            )
+        }
         // The session's own scopes, for the bearer that asks.
         "/api/auth/session" => {
             if header(request, "authorization") != format!("Bearer {TOKEN}") {
