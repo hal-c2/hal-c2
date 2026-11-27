@@ -54,6 +54,76 @@ defmodule HalC2.ProjectsTest do
                    1_000
   end
 
+  # A delete that tombstones the project and then drops its settings overrides can
+  # stop between the two, leaving the entry behind. A repeated delete is refused as
+  # unknown, but it must still drop that leftover entry.
+  test "a repeated delete of a deleted project drops its leftover settings overrides", %{
+    tmp_dir: dir
+  } do
+    previous_home = Application.fetch_env(:hal_c2, :home)
+    Application.put_env(:hal_c2, :home, Path.join(dir, "mc-home"))
+
+    on_exit(fn ->
+      case previous_home do
+        {:ok, home} -> Application.put_env(:hal_c2, :home, home)
+        :error -> Application.delete_env(:hal_c2, :home)
+      end
+    end)
+
+    start_supervised!(HalC2.Settings)
+    root = Path.join(dir, "app")
+    File.mkdir_p!(root)
+
+    assert {:ok, _} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => root
+             })
+
+    put_override = fn ->
+      {:ok, _} =
+        HalC2.Settings.update(fn settings ->
+          overrides =
+            (settings["projectSettingsOverrides"] || %{})
+            |> Map.put("p1", %{"defaultAutoPull" => true})
+            |> Map.put("p2", %{"defaultAutoPull" => false})
+
+          Map.put(settings, "projectSettingsOverrides", overrides)
+        end)
+    end
+
+    put_override.()
+
+    assert {:ok, %{"deletedAt" => deleted}} =
+             Projects.mutate(%{"type" => "project.delete", "projectId" => "p1"})
+
+    assert deleted
+    refute Map.has_key?(HalC2.Settings.settings()["projectSettingsOverrides"] || %{}, "p1")
+
+    # The crash window: tombstoned, with its overrides entry still present.
+    put_override.()
+    assert Map.has_key?(HalC2.Settings.settings()["projectSettingsOverrides"], "p1")
+
+    # An update of the deleted project is still refused and drops nothing.
+    assert {:error, "unknown project p1"} =
+             Projects.mutate(%{
+               "type" => "project.update",
+               "projectId" => "p1",
+               "title" => "Renamed"
+             })
+
+    assert Map.has_key?(HalC2.Settings.settings()["projectSettingsOverrides"], "p1")
+
+    # The repeated delete keeps the same refusal, and the leftover entry goes.
+    assert {:error, "unknown project p1"} =
+             Projects.mutate(%{"type" => "project.delete", "projectId" => "p1"})
+
+    overrides = HalC2.Settings.settings()["projectSettingsOverrides"] || %{}
+    refute Map.has_key?(overrides, "p1")
+    assert overrides["p2"] == %{"defaultAutoPull" => false}
+  end
+
   test "a monogram over two characters and a new script id that cannot be a shortcut are refused",
        %{tmp_dir: dir} do
     assert {:ok, _} =

@@ -154,19 +154,36 @@ defmodule HalC2.Projects do
 
       {threads, _} ->
         with :ok <- delete_threads(threads, m["commandId"] || "project.delete:#{id}"),
-             :ok <- HalC2.ProjectClones.discard(id),
-             {:ok, _} = deleted <-
-               update(
-                 id,
-                 &Map.merge(&1, %{"deletedAt" => Entities.now(), "updatedAt" => Entities.now()})
-               ) do
-          drop_overrides(id)
+             :ok <- HalC2.ProjectClones.discard(id) do
+          deleted =
+            update(
+              id,
+              &Map.merge(&1, %{"deletedAt" => Entities.now(), "updatedAt" => Entities.now()})
+            )
+
+          # A delete that stopped after tombstoning left the overrides behind, and a
+          # repeated delete is refused by `update/2`: drop the leftover then too, so
+          # the refusal is not what keeps it there for good.
+          case deleted do
+            {:ok, _} -> drop_overrides(id)
+            {:error, _} -> if deleted?(id), do: drop_overrides(id)
+          end
+
           deleted
         end
     end
   end
 
   defp apply_mutation(%{"type" => type}, _opts), do: {:error, "#{type} is not supported"}
+
+  # Whether the stored project is tombstoned: `update/2` refuses it and one that
+  # never existed with the same "unknown project", and only the tombstoned one's
+  # leftover overrides are a deleted project's to drop.
+  defp deleted?(id) do
+    path = HalC2.Store.path()
+    project = StreamState.get(StreamState.load(path, id), "project")[id]
+    match?(%{"deletedAt" => at} when is_binary(at), project)
+  end
 
   # A deleted project's settings go with it: a provider it turned on would otherwise
   # stay checked for a project nobody can open (upstream #17879).
