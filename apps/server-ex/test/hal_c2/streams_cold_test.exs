@@ -351,6 +351,80 @@ defmodule HalC2.StreamsColdTest do
     assert List.keyfind(walked, "r1-i2", 1)
   end
 
+  test "a stream its migration demotes releases what the demotion let go", %{path: path} do
+    previous = Application.get_env(:hal_c2, :stream_max_legacy_bytes)
+    Application.put_env(:hal_c2, :stream_max_legacy_bytes, 1)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_max_legacy_bytes, previous),
+        else: Application.delete_env(:hal_c2, :stream_max_legacy_bytes)
+    end)
+
+    start_supervised!(Streams.Migrations)
+    for i <- 1..8, do: run("th", i, 3)
+    seq = Streams.state("th").seq
+    for i <- 9..10, do: run("th", i, 3)
+    stop("th")
+
+    # The older MC's snapshot is behind the log: the runs after it load hot on top of
+    # it, and the migration's completion is the first compaction to demote them.
+    legacy = legacy(path, "th", seq)
+    sql!(path, "DELETE FROM hot_snapshots")
+    sql!(path, "DELETE FROM cold")
+    put_legacy(path, "th", legacy.seq, legacy)
+
+    test = self()
+
+    holder =
+      spawn_link(fn ->
+        :ok = Streams.Migrations.turn()
+        send(test, :holding)
+        receive do: (:release -> :ok)
+      end)
+
+    assert_receive :holding
+    pid = Streams.ensure("th")
+    migration = :sys.get_state(pid).migration
+    assert is_pid(migration)
+    assert StreamState.get(:sys.get_state(pid).stream, "turn-item")["r9-i1"] != nil
+
+    # A floor from before that demotion, and a heap grown well past what the hot
+    # state needs but nowhere near half that floor again.
+    :sys.replace_state(pid, fn state ->
+      garbage = for i <- 1..200_000, do: {i, "item-#{i}", [i, i, i]}
+      _ = length(garbage)
+      Map.put(state, :gc_floor, 10_000_000)
+    end)
+
+    on_release()
+
+    # A read of the cold rows waits for the migration in the stream itself, which
+    # requeues the completion behind the migration's exit: the completion is the last
+    # message the stream handles. The call trace tells when the stream got there;
+    # held there, the completion and the exit both arrive before it looks.
+    :erlang.trace_pattern({Server, :await_cold, 1}, true, [:local])
+    on_exit(fn -> :erlang.trace_pattern({Server, :await_cold, 1}, false, [:local]) end)
+    1 = :erlang.trace(pid, true, [:call])
+
+    reader = Task.async(fn -> Server.get(pid, "turn-item", "r1-i1") end)
+    assert_receive {:trace, ^pid, :call, {Server, :await_cold, [^pid]}}
+    true = :erlang.suspend_process(pid)
+    1 = :erlang.trace(pid, false, [:call])
+    ref = Process.monitor(migration)
+    send(holder, :release)
+    assert_receive {:DOWN, ^ref, :process, ^migration, :normal}
+    true = :erlang.resume_process(pid)
+    assert %{"text" => "1.1"} = Task.await(reader)
+
+    assert_receive {:hal_c2_stream_released, ^pid, _heap_words}, 2_000
+    assert {:memory, memory} = Process.info(pid, :memory)
+    assert memory < 4_000_000, "migrated stream still holds #{memory} bytes"
+    held = StreamState.get(Streams.state("th"), "turn-item")
+    assert held["r9-i1"] == nil
+    assert held["r10-i1"] != nil
+  end
+
   test "the transcript counts what a whole fold shows, cold items included", %{path: path} do
     for i <- 1..3, do: run("src", i, 3)
     {:ok, _} = Streams.commit("src", :thread, [{"thread", "src", %{"s" => %{"id" => "src"}}}])
@@ -530,6 +604,23 @@ defmodule HalC2.StreamsColdTest do
     after
       1_000 -> flunk("no page")
     end
+  end
+
+  defp on_release do
+    test = self()
+    id = {__MODULE__, test, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        id,
+        [:hal_c2, :streams, :release_memory],
+        fn _event, %{heap_words: words}, %{server: server}, _config ->
+          send(test, {:hal_c2_stream_released, server, words})
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(id) end)
   end
 
   defp stop(id) do
