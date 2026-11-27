@@ -220,7 +220,9 @@ defmodule HalC2.PreviewAutomationTest do
 
     call = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "click", %{}) end)
     {_, request} = next_request("desk")
-    send(Process.whereis(HalC2.PreviewAutomation), {:timeout, request["requestId"]})
+    time_out(request)
+    {connection_id, probe} = next_request("desk")
+    send(broker(), {:probe_timeout, connection_id, probe["requestId"]})
     assert {:error, %{"_tag" => "PreviewAutomationTimeoutError"}} = Task.await(call)
     assert_receive {:hal_c2_preview_automation, _, "desk", :end}
 
@@ -506,20 +508,171 @@ defmodule HalC2.PreviewAutomationTest do
              "There is no browser profile named \"Personal\". Use one of: Default, Work."
   end
 
-  test "an unanswered request fails and drops the host, whose stream ends" do
+  # The broker's own timer messages, sent now rather than when they would fire.
+  defp broker, do: Process.whereis(HalC2.PreviewAutomation)
+  defp time_out(request), do: send(broker(), {:timeout, request["requestId"]})
+
+  # HAL-C2 #1856: one busy page evicted its host, so every tab lost it.
+  test "a request that times out fails alone while its host still answers a status check" do
     host("desk")
 
-    assert {:error, "PreviewAutomationTimeoutError", _} =
-             HalC2.Mcp.Preview.call(
-               "preview_wait_for",
-               %{"text" => "x", "timeoutMs" => 50},
-               @caller
-             )
+    call =
+      Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "click", %{}, tab_id: "tab-1") end)
 
+    {_, request} = next_request("desk")
+    time_out(request)
+
+    {connection_id, probe} = next_request("desk")
+
+    assert %{"operation" => "status", "input" => %{}, "tabIdExplicit" => false} = probe
+    assert probe["timeoutMs"] == 5_000
+    answer("desk", connection_id, probe, %{"url" => "about:blank"})
+
+    assert {:error,
+            %{"_tag" => "PreviewAutomationTimeoutError", "hostResponding" => true} = error} =
+             Task.await(call)
+
+    assert HalC2.PreviewAutomation.message(error) =~
+             "click timed out after 15000ms. The desktop is still answering, so its connection is fine"
+
+    refute_received {:hal_c2_preview_automation, _, "desk", :end}
+
+    # The host still takes the session's next action, and the click is not sent again.
+    call = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "status", %{}) end)
+    {^connection_id, next} = next_request("desk")
+    assert next["operation"] == "status"
+    answer("desk", connection_id, next, %{"tabId" => "tab-1"})
+    assert {:ok, _} = Task.await(call)
+    refute_received {:hal_c2_preview_automation, _, "desk", %{"type" => "request"}}
+  end
+
+  test "a host that leaves the status check unanswered too is dropped, and its stream ends" do
+    host("desk")
+
+    call =
+      Task.async(fn ->
+        HalC2.Mcp.Preview.call("preview_wait_for", %{"text" => "x"}, @caller)
+      end)
+
+    {_, request} = next_request("desk")
+    time_out(request)
+    {connection_id, probe} = next_request("desk")
+    send(broker(), {:probe_timeout, connection_id, probe["requestId"]})
+
+    assert {:error, "PreviewAutomationTimeoutError", message} = Task.await(call)
+    assert message =~ "did not answer a status check either, so its connection was dropped"
     assert_receive {:hal_c2_preview_automation, _, "desk", :end}
 
     assert {:error, "PreviewAutomationNoAvailableHostError", _} =
              HalC2.Mcp.Preview.call("preview_status", %{}, @caller)
+  end
+
+  test "requests timing out together share one status check, and any answer settles it" do
+    host("desk")
+    other = %{@caller | thread_id: "th-2"}
+
+    first =
+      Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "click", %{}, tab_id: "tab-1") end)
+
+    {_, one} = next_request("desk")
+
+    second =
+      Task.async(fn -> HalC2.PreviewAutomation.invoke(other, "click", %{}, tab_id: "tab-2") end)
+
+    {connection_id, two} = next_request("desk")
+
+    time_out(one)
+    {_, probe} = next_request("desk")
+    time_out(two)
+    refute_receive {:hal_c2_preview_automation, _, "desk", %{"type" => "request"}}, 50
+
+    # A late answer to the first click shows the host alive before the check does.
+    answer("desk", connection_id, one, %{"clicked" => true})
+
+    for call <- [first, second] do
+      assert {:error, %{"_tag" => "PreviewAutomationTimeoutError", "hostResponding" => true}} =
+               Task.await(call)
+    end
+
+    # The check's own answer, and its stale timer, change nothing now.
+    answer("desk", connection_id, probe, %{})
+    send(broker(), {:probe_timeout, connection_id, probe["requestId"]})
+    assert :sys.get_state(broker()).probes == %{}
+    assert Map.has_key?(:sys.get_state(broker()).clients, "desk")
+    refute_received {:hal_c2_preview_automation, _, "desk", :end}
+  end
+
+  test "a host's own timeout answer says the host is still answering" do
+    host("desk")
+    call = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "waitFor", %{}) end)
+    {connection_id, request} = next_request("desk")
+
+    HalC2.PreviewAutomation.respond(%{
+      "clientId" => "desk",
+      "connectionId" => connection_id,
+      "requestId" => request["requestId"],
+      "ok" => false,
+      "error" => %{"_tag" => "PreviewAutomationTimeoutError", "message" => "timed out"}
+    })
+
+    assert {:error, %{"_tag" => "PreviewAutomationTimeoutError", "hostResponding" => true}} =
+             Task.await(call)
+  end
+
+  for {tool, args, operation} <- [
+        {"preview_evaluate", %{"expression" => "1", "tabId" => "tab-1"}, "evaluate"},
+        {"preview_snapshot", %{}, "snapshot"}
+      ] do
+    test "#{tool} waits as long as its timeoutMs allows" do
+      host("desk")
+
+      call =
+        Task.async(fn ->
+          HalC2.Mcp.Preview.call(
+            unquote(tool),
+            Map.put(unquote(Macro.escape(args)), "timeoutMs", 40_000),
+            @caller
+          )
+        end)
+
+      {_, request} = next_request("desk")
+      assert request["operation"] == unquote(operation)
+      assert request["timeoutMs"] == 40_000
+      refute Map.has_key?(request["input"], "timeoutMs")
+
+      assert Process.read_timer(:sys.get_state(broker()).pending[request["requestId"]].timer) >
+               15_000
+
+      Task.shutdown(call, :brutal_kill)
+    end
+  end
+
+  test "a tool that takes no timeoutMs refuses one instead of ignoring it" do
+    host("desk")
+
+    assert {:error, "PreviewAutomationInvalidInputError", message} =
+             HalC2.Mcp.Preview.call(
+               "preview_press",
+               %{"key" => "Enter", "timeoutMs" => 30_000},
+               @caller
+             )
+
+    assert message =~ "preview_press does not take timeoutMs"
+    refute_received {:hal_c2_preview_automation, _, "desk", %{"type" => "request"}}
+
+    # A null timeoutMs is the same as none.
+    call =
+      Task.async(fn ->
+        HalC2.Mcp.Preview.call(
+          "preview_press",
+          %{"key" => "Enter", "tabId" => "tab-1", "timeoutMs" => nil},
+          @caller
+        )
+      end)
+
+    {_, request} = next_request("desk")
+    assert request["operation"] == "press"
+    Task.shutdown(call, :brutal_kill)
   end
 
   test "a snapshot is bounded JSON plus the screenshot, and can be saved" do

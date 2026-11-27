@@ -42,6 +42,7 @@ defmodule HalC2.Steps.Preview.Automation do
     "wait for text to appear" => {"preview_wait_for", %{"text" => "Saved"}, "waitFor"},
     "evaluate a script in the page" =>
       {"preview_evaluate", %{"expression" => "document.title"}, "evaluate"},
+    "take a snapshot" => {"preview_snapshot", %{}, "snapshot"},
     "start a recording" => {"preview_recording_start", %{}, "recordingStart"}
   }
 
@@ -212,11 +213,62 @@ defmodule HalC2.Steps.Preview.Automation do
     context |> connect_desktop("desktop-1") |> act("read the tab's status")
   end
 
-  # The broker's own timer message, sent now rather than after 15 seconds.
-  step "the desktop does not answer an action within its time limit", context do
+  # The broker's own timer message, sent now rather than after 15 seconds; the
+  # status check it then sends is answered as any status read is.
+  step "the desktop does not answer an action within its time limit but answers a status check",
+       context do
     context
     |> answer("click", fn _request, _context -> :timeout end)
     |> act("click a button")
+    # Only that click was slow; the page answers the next one.
+    |> Map.update!(:answers, &Map.delete(&1, "click"))
+  end
+
+  # The status check's timer runs out now too, rather than after 5 seconds.
+  step "the desktop answers neither an action nor a status check within their time limits",
+       context do
+    context
+    |> answer("click", fn _request, _context -> :timeout end)
+    |> answer("status", fn _request, _context -> :probe_timeout end)
+    |> act("click a button")
+  end
+
+  step "the tool fails saying the click timed out while the desktop is still answering",
+       context do
+    assert {:error, "PreviewAutomationTimeoutError", message} = context.result
+    assert message =~ "Preview automation click timed out after 15000ms."
+    assert message =~ "The desktop is still answering, so its connection is fine"
+    context
+  end
+
+  step "the tool fails saying the click timed out and the desktop was dropped", context do
+    assert {:error, "PreviewAutomationTimeoutError", message} = context.result
+    assert message =~ "Preview automation click timed out after 15000ms."
+    assert message =~ "did not answer a status check either, so its connection was dropped"
+    context
+  end
+
+  step "the same desktop takes the agent's next action", context do
+    assert Map.has_key?(broker().clients, "desktop-1")
+    context = act(context, "click a button")
+    assert {:ok, _} = context.result
+    assert [{"desktop-1", _}, {"desktop-1", _}] = requests(context, "click")
+    context
+  end
+
+  step "the agent presses a key allowing 30 seconds", context do
+    tool(context, "preview_press", %{"key" => "Enter", "timeoutMs" => 30_000})
+  end
+
+  step "the tool fails saying preview_press does not take a time limit", context do
+    assert {:error, "PreviewAutomationInvalidInputError", message} = context.result
+    assert message =~ "preview_press does not take timeoutMs"
+    context
+  end
+
+  step "no key press reaches the desktop browser", context do
+    assert requests(context, "press") == []
+    context
   end
 
   step "the MC drops that desktop so it has to register again", context do
@@ -261,7 +313,9 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "the tool fails with the browser's timeout", context do
     assert {:error, "PreviewAutomationTimeoutError",
-            "Preview automation waitFor timed out after 15000ms."} = context.result
+            "Preview automation waitFor timed out after 15000ms." <> cause} = context.result
+
+    assert cause =~ "The desktop is still answering"
 
     context
   end
@@ -1004,6 +1058,8 @@ defmodule HalC2.Steps.Preview.Automation do
     {_desktop, request} = context.held
     left = Process.read_timer(broker().pending[request["requestId"]].timer)
 
+    assert request["operation"] == operation
+
     context
     |> Map.put(:wait, %{operation: operation, timeout_ms: request["timeoutMs"], left: left})
     |> finish()
@@ -1014,8 +1070,14 @@ defmodule HalC2.Steps.Preview.Automation do
     timeout = seconds * 1_000
     assert %{timeout_ms: ^timeout, left: left} = context.wait
     assert left > 15_000 and left <= timeout
-    assert {:ok, %{"done" => done}} = context.result
-    assert done == context.wait.operation
+
+    # A snapshot comes back as text and image content, an evaluation as its value.
+    case context.result do
+      {:ok, _structured, _content} -> assert context.wait.operation == "snapshot"
+      {:ok, %{"value" => %{"done" => done}}} -> assert done == context.wait.operation
+      {:ok, %{"done" => done}} -> assert done == context.wait.operation
+    end
+
     context
   end
 
@@ -1955,6 +2017,17 @@ defmodule HalC2.Steps.Preview.Automation do
     case reply(request, context) do
       :timeout ->
         send(Process.whereis(HalC2.PreviewAutomation), {:timeout, request["requestId"]})
+        context
+
+      # A status check the desktop leaves unanswered until the broker gives up on it.
+      :probe_timeout ->
+        connection = context.desktops[name].connection_id
+
+        send(
+          Process.whereis(HalC2.PreviewAutomation),
+          {:probe_timeout, connection, request["requestId"]}
+        )
+
         context
 
       {:ok, result} ->

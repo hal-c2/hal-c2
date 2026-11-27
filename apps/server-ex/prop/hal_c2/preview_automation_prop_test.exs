@@ -13,8 +13,10 @@ defmodule HalC2.PreviewAutomationPropTest do
   Commands change what the two desktops report (focus, shown tabs, live tabs,
   snapshot-only), start a fresh agent session on a tab (or none), open again
   in a session (reusing its current tab, or making a new one once its host
-  was dropped), click naming no tab, drop a session's host by a timed-out
-  action, re-register a host, and ask whose a tab is or forget it. The test
+  was dropped), click naming no tab, time out a session's action (its host is
+  dropped only when it leaves the status check that follows unanswered too;
+  one that answers keeps the session and its current tab), re-register a host,
+  and ask whose a tab is or forget it. The test
   process is both desktops and answers each request as the desktop does: on
   the tab it names, else for an open asking for a new tab a new
   `HalC2.Preview` tab, else that desktop's current tab of the thread, which
@@ -137,7 +139,7 @@ defmodule HalC2.PreviewAutomationPropTest do
                  h != nil and t != nil and refusal(state, slot, t) == nil,
                  do: slot do
           [] -> []
-          hosted -> [{1, {:call, __MODULE__, :evict, [oneof(hosted)]}}]
+          hosted -> [{2, {:call, __MODULE__, :time_out, [oneof(hosted), bool()]}}]
         end
     )
   end
@@ -168,7 +170,7 @@ defmodule HalC2.PreviewAutomationPropTest do
     do: slot < state.next and made == state.made
 
   # Its click goes to its current tab, which it must have and be allowed to change.
-  def precondition(state, {:call, _, :evict, [slot]}),
+  def precondition(state, {:call, _, :time_out, [slot, _alive]}),
     do:
       state.sessions[slot][:host] != nil and state.sessions[slot].current != nil and
         refusal(state, slot, state.sessions[slot].current) == nil
@@ -267,7 +269,10 @@ defmodule HalC2.PreviewAutomationPropTest do
     end
   end
 
-  def next_state(state, _result, {:call, _, :evict, [slot]}),
+  # A host that answers the status check keeps its sessions as they were.
+  def next_state(state, _result, {:call, _, :time_out, [_slot, true]}), do: state
+
+  def next_state(state, _result, {:call, _, :time_out, [slot, false]}),
     do: reregistered(state, state.sessions[slot].host)
 
   def next_state(state, _result, {:call, _, :reconnect, [id]}), do: reregistered(state, id)
@@ -433,8 +438,8 @@ defmodule HalC2.PreviewAutomationPropTest do
   def postcondition(state, {:call, _, :reopen, [slot, _made]}, result),
     do: result == (state.sessions[slot][:host] || expected_host(state, nil))
 
-  def postcondition(state, {:call, _, :evict, [slot]}, result),
-    do: result == state.sessions[slot].host
+  def postcondition(state, {:call, _, :time_out, [slot, alive]}, result),
+    do: result == {state.sessions[slot].host, alive}
 
   def postcondition(state, {:call, _, :ownership, [slot, tab]}, result) do
     expected =
@@ -611,19 +616,45 @@ defmodule HalC2.PreviewAutomationPropTest do
     end
   end
 
-  # A session's action its host never answers: the broker's timer fires now,
-  # the host is dropped and its stream ends, and it registers again. Its id.
-  def evict(slot) do
+  # A session's action its host never answers: the broker's timer fires now
+  # and the host is sent a status check. A host that is `alive` answers it and
+  # keeps its connection; one that is not leaves it unanswered until its timer
+  # fires too, so the host is dropped, its stream ends, and it registers again.
+  # Its id, and whether the error said the host was still answering.
+  def time_out(slot, alive) do
     task = Task.async(fn -> PreviewAutomation.invoke(scope(slot), "click", %{}) end)
 
     assert_receive {:hal_c2_preview_automation, _, id,
-                    %{"type" => "request", "request" => request}}
+                    %{"type" => "request", "connectionId" => connection, "request" => request}}
 
     send(Process.whereis(PreviewAutomation), {:timeout, request["requestId"]})
-    {:error, %{"_tag" => "PreviewAutomationTimeoutError"}} = Task.await(task)
-    assert_receive {:hal_c2_preview_automation, _, ^id, :end}
-    register(id)
-    id
+
+    assert_receive {:hal_c2_preview_automation, _, ^id,
+                    %{"type" => "request", "request" => %{"operation" => "status"} = probe}}
+
+    if alive do
+      PreviewAutomation.respond(%{
+        "clientId" => id,
+        "connectionId" => connection,
+        "requestId" => probe["requestId"],
+        "ok" => true,
+        "result" => %{}
+      })
+    else
+      send(Process.whereis(PreviewAutomation), {:probe_timeout, connection, probe["requestId"]})
+    end
+
+    {:error, %{"_tag" => "PreviewAutomationTimeoutError", "hostResponding" => responding}} =
+      Task.await(task)
+
+    if alive do
+      refute_received {:hal_c2_preview_automation, _, ^id, :end}
+    else
+      assert_receive {:hal_c2_preview_automation, _, ^id, :end}
+      register(id)
+    end
+
+    {id, responding}
   end
 
   # The same desktop registering again, which replaces its connection.

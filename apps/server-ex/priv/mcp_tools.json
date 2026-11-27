@@ -771,6 +771,20 @@
               "type": "null"
             }
           ]
+        },
+        "timeoutMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 60000,
+              "description": "Maximum time for the expression, including an awaited Promise, in milliseconds. Defaults to 15000; maximum 60000."
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum time for the expression, including an awaited Promise, in milliseconds. Defaults to 15000; maximum 60000."
         }
       },
       "required": ["expression"],
@@ -1401,6 +1415,20 @@
               "type": "null"
             }
           ]
+        },
+        "timeoutMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 60000,
+              "description": "Maximum wait for the snapshot in milliseconds. Defaults to 15000; maximum 60000. A page whose main thread is busy cannot be snapshotted until it frees up."
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum wait for the snapshot in milliseconds. Defaults to 15000; maximum 60000. A page whose main thread is busy cannot be snapshotted until it frees up."
         }
       },
       "additionalProperties": true
