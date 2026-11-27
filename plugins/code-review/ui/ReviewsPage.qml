@@ -151,6 +151,11 @@ Item {
         return (review.untrusted ?? "").length > 0 && review.approved !== review.headSha && !["running", "queued", "publishing"].includes(review.status);
     }
 
+    // A review kept for a push that only rebased the change it reviewed.
+    function carriedText(carried) {
+        return qsTr("Carried over from %1: the push only rebased the reviewed change").arg((carried.from ?? "").slice(0, 7));
+    }
+
     // Why a review is where it is, in a few words.
     function note(review) {
         if (review.elsewhere)
@@ -159,6 +164,8 @@ Item {
             return review.error ?? "";
         if (review.status === "waiting" && review.publishError)
             return qsTr("Publishing failed: %1").arg(review.publishError);
+        if (review.carried)
+            return page.carriedText(review.carried);
         if (review.status === "published" && review.publishNote)
             return review.publishNote;
         if (page.gated(review))

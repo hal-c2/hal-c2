@@ -223,7 +223,8 @@ Rectangle {
                     return "";
                 const where = review.headBranch && review.baseBranch ? qsTr("%1 into %2").arg(review.headBranch).arg(review.baseBranch) : "";
                 const sandbox = review.sandboxed ? qsTr("in a sandbox") : "";
-                return [review.repository, where, header.statusText(), sandbox].filter(part => part && part.length > 0).join(" · ");
+                const carried = review.carried ? qsTr("carried over from %1, as the push only rebased it").arg((review.carried.from ?? "").slice(0, 7)) : "";
+                return [review.repository, where, header.statusText(), sandbox, carried].filter(part => part && part.length > 0).join(" · ");
             }
             color: header.muted
             elide: Text.ElideRight
