@@ -419,6 +419,87 @@ defmodule HalC2.VcsTest do
              Enum.find(refs, &(&1["name"] == "github/main"))
   end
 
+  # A fresh branch look-up that sees its pull request open asks the sync sweep
+  # to read it again only where a link to it has left the sweep, and names the
+  # repository the host named (here `acme/app`, not the `alice/app` origin).
+  test "a branch look-up revives only a linked pull request that left the sweep",
+       %{repo: repo, tmp_dir: dir} do
+    git!(repo, ~w(remote set-url origin https://github.com/alice/app.git))
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Shell)
+
+    test = self()
+    sync = spawn(fn -> sync_dummy(test) end)
+    Process.register(sync, HalC2.PullRequests.Sync)
+    on_exit(fn -> if Process.alive?(sync), do: Process.exit(sync, :kill) end)
+
+    fetch = fn _cwd, _branch ->
+      {:ok,
+       %{
+         "number" => 12,
+         "state" => "open",
+         "url" => "https://github.com/acme/app/pull/12"
+       }}
+    end
+
+    start_supervised!({HalC2.PullRequests.Branches, fetch: fetch})
+
+    link = %{
+      "host" => "github.com",
+      "repository" => "acme/app",
+      "number" => 12,
+      "url" => "https://github.com/acme/app/pull/12",
+      "source" => "manual"
+    }
+
+    put_thread = fn snapshot, extra ->
+      row =
+        Map.merge(
+          %{"id" => "t1", "pullRequests" => [Map.put(link, "snapshot", snapshot)]},
+          extra
+        )
+
+      HalC2.Shell.put_row("t1", {"thread", row})
+      :ok = HalC2.Shell.sync()
+      :ok = HalC2.PullRequests.Branches.forget(repo)
+    end
+
+    put_thread.(%{"state" => "closed", "closedAt" => "2026-08-24T00:00:00Z"}, %{})
+    assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
+
+    assert_receive {:sync_cast, {:request, ref}}
+    assert ref["repository"] == "acme/app"
+    assert ref["number"] == 12
+
+    put_thread.(%{"state" => "open"}, %{})
+    assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
+    refute_receive {:sync_cast, _}, 100
+
+    # An open snapshot on a settled thread would stay revivable forever:
+    # asking again on every fresh look-up repeats a host read, and a settled
+    # thread hears nothing anyway.
+    put_thread.(%{"state" => "open"}, %{"settledOverride" => "settled"})
+    assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
+    refute_receive {:sync_cast, _}, 100
+
+    # Settled by override or on its own, a closed snapshot still revives.
+    put_thread.(
+      %{"state" => "closed", "closedAt" => "2026-08-24T00:00:00Z"},
+      %{"settledAt" => "2026-09-01T00:00:00Z"}
+    )
+
+    assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
+    assert_receive {:sync_cast, {:request, _ref}}
+  end
+
+  defp sync_dummy(test) do
+    receive do
+      {:"$gen_cast", message} -> send(test, {:sync_cast, message})
+    end
+
+    sync_dummy(test)
+  end
+
   defp commit!(repo, message),
     do: git!(repo, ~w(-c user.name=t -c user.email=t@t commit -q -m) ++ [message])
 

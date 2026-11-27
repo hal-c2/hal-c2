@@ -18,10 +18,13 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   screen's exchange, `pairing.json`, environments beside the first),
   `mobile_terminal.rs` (MobileTerminal's key row, text size, menu
   and line picking), `layout.rs` (MobileApp's `layout.desktop`),
-  `resume.rs` (Resume's decision and its Application wiring), and
+  `resume.rs` (Resume's decision and its Application wiring),
+  `push_crypto.rs` and `push_inbox.rs` (PushCrypto's RFC 8291
+  decryption and PushInbox's showing rules, ported; the Android
+  receivers that call them wait for hal-c2/ljos-ui#616), and
   stand-ins that publish the C++ state shape until H1 ports them:
   `scanner.rs` (Scanner/ScanCamera/QrReader), `notifications.rs`
-  (Notifications and the push inbox), `maintenance.rs` (Maintenance).
+  (Notifications over the inbox), `maintenance.rs` (Maintenance).
 - `qml/` is the entry. The C++ types the phone's screens name are
   the shell's native types now (#1624): `TerminalEvents`
   (`apps/desktop-ljos/shell/src/terminal/events.rs`) and

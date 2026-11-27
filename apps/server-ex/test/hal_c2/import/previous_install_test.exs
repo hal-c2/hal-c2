@@ -99,6 +99,47 @@ defmodule HalC2.Import.PreviousInstallTest do
     :ok = Exqlite.Sqlite3.close(db)
   end
 
+  # A script id saved before HalC2.Projects ruled on their shape is kept as
+  # it was saved: the import carries the install's ids in as already saved,
+  # instead of refusing the project (and with it, its threads).
+  test "a project whose saved script ids predate the id rule still imports, keeping them",
+       %{install: install, log: log} do
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    scripts =
+      JSON.encode!([
+        %{
+          "id" => "Build",
+          "name" => "Build",
+          "command" => "make",
+          "icon" => "build",
+          "runOnWorktreeCreate" => false
+        }
+      ])
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(
+        db,
+        "UPDATE projection_projects SET scripts_json = ?1 WHERE project_id = 'v2-project'"
+      )
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [scripts])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    readable(log)
+
+    assert {:ok, %{"imported" => [@id]}} =
+             PreviousInstall.import_threads(%{"source" => install, "threadIds" => [@id]})
+
+    project =
+      Streams.read("v2-project", fn state ->
+        StreamState.get(state, "project")["v2-project"]
+      end)
+
+    assert [%{"id" => "Build"}] = project["scripts"]
+  end
+
   defp readable(log) do
     {:ok, db} = Exqlite.Sqlite3.open(log)
 

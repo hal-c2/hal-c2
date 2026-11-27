@@ -24,6 +24,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   @diff_bytes 8 * 1024 * 1024
   # The git commands that start programs of their own, which a deadline kills with them.
   @starting ~w(fetch submodule worktree)
+  # `same_patch?/4` reads the whole change as one diff, bigger than `@git_bytes` covers.
+  @patch_bytes 50_000_000
 
   @doc """
   Fetches pull request `number` and its base branch `base` from `remote` into the bare
@@ -389,6 +391,44 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   end
 
   @doc """
+  Whether the change `old_base`..`old_head` in the repository at `clone` is the change
+  between a checkout's (`prepare/6`'s answer) `"mergeBase"` and `"headSha"`: the same
+  `git patch-id --stable` of the diff from the merge base, as after a rebase that only
+  moved the change. False when either range is empty, a commit is missing (a force-push
+  took the old head away and it was never fetched) or git fails.
+
+  Each diff has `@git_ms` and `@patch_bytes` before it is given up, the same bound as
+  the plugin's other quick reads, only with room for a whole change's diff.
+  """
+  def same_patch?(clone, old_base, old_head, %{"mergeBase" => new_base, "headSha" => new_head}) do
+    ranges = [{old_base, old_head}, {new_base, new_head}]
+
+    if Enum.all?(ranges, fn {base, head} -> is_binary(base) and is_binary(head) end) do
+      case Enum.map(ranges, &patch_id(clone, &1)) do
+        [{:ok, id}, {:ok, id}] -> true
+        _ -> false
+      end
+    else
+      false
+    end
+  end
+
+  # The patch id of the diff `base`..`head`, `:none` when it is empty, git fails, or it
+  # ran past `@patch_bytes` or `@git_ms`.
+  defp patch_id(clone, {base, head}) do
+    diff = ["diff", "--no-color", "--no-ext-diff", "--full-index", "--binary", base, head]
+
+    with {:ok, out} when out != "" <- raw_git(clone, diff, [], max_bytes: @patch_bytes),
+         {:ok, id} <-
+           raw_git(clone, ["patch-id", "--stable"], [], max_bytes: @patch_bytes, input: out),
+         [id | _] <- String.split(id) do
+      {:ok, id}
+    else
+      _ -> :none
+    end
+  end
+
+  @doc """
   The text of `file` at commit `sha` in the checkout at `path`, or nil when the commit
   has no such regular file, it is over `limit` bytes or it is not UTF-8 text. It is read
   from git rather than the worktree: the pull request decides what the worktree holds,
@@ -708,6 +748,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
            unset: isolated[:unset] ++ Enum.map(unset, &elem(&1, 0)),
            timeout: Keyword.get(opts, :timeout, @git_ms),
            max_bytes: max,
+           input: opts[:input],
            stop_children: if(command(args) in @starting, do: {__MODULE__, make_ref()})
          ) do
       {:ok, %{status: 0, truncated: true}} ->

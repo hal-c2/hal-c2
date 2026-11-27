@@ -1001,4 +1001,14 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     refute raw =~ "Authorization"
     context
   end
+
+  step "its state folder can be read only by the user the MC runs as", context do
+    dir = HalC2.Paths.state_dir()
+    mode = File.stat!(dir).mode
+
+    assert Bitwise.band(mode, 0o077) == 0,
+           "state folder #{dir} mode is #{Integer.to_string(mode, 8)}"
+
+    context
+  end
 end

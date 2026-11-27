@@ -31,7 +31,7 @@ defmodule Mix.Tasks.HalC2.Thread.Export do
       {:ok, summary} ->
         Mix.shell().info(
           "Exported #{summary.title} (#{summary.thread}) to #{summary.path} " <>
-            "(#{summary.attachments} attachments, #{summary.terminal_logs} terminal logs, " <>
+            "(#{summary.events} events, #{summary.attachments} attachments, #{summary.terminal_logs} terminal logs, " <>
             "#{summary.checkpoints} checkpoints#{if summary.session, do: ", the agent's session"})"
         )
 

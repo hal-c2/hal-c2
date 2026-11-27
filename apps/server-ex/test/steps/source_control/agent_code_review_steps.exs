@@ -33,6 +33,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
   @heading "## Agentic code review\n\n"
+  @marker ~r/<!-- hal-c2-code-review:[^>]* -->/
   # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
@@ -670,6 +671,47 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
   end
 
+  step "\#{int} was reviewed and kept in HAL-C2", %{args: [number]} = context do
+    context
+    |> save(%{
+      "repositories" => [context.repository],
+      "activation" => "automatic",
+      "publishing" => "local"
+    })
+    |> open(number)
+    |> refresh()
+    |> started(number)
+    |> report(findings("approve", 1))
+    |> await_review!(number, &(&1["status"] == "kept"))
+  end
+
+  # The same change, committed again onto a main that moved on.
+  step "\#{int} is rebased onto a newer base branch", %{args: [number]} = context do
+    context = push_base(context, %{"NOTES.md" => "Notes.\n"})
+    head = push_head(context, number, %{"src/limits.ts" => @limits})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
+  step "the review of \#{int} is carried over to the new head commit",
+       %{args: [number]} = context do
+    head = context.heads[number]
+
+    {review, context} =
+      await_review(context, number, &(&1["carried"] != nil and &1["reviewedSha"] == head))
+
+    assert %{"status" => "kept", "verdict" => "approve"} = review
+    assert review["threadId"] == context.thread
+    assert is_binary(review["carried"]["from"]) and review["carried"]["from"] != head
+    Map.put(context, :snapshot, context.reviews_last)
+  end
+
+  step "{string} reviews rebases", %{args: [@id]} = context do
+    save(context, %{"reviewRebases" => true})
+  end
+
   step "{string} stops watching {string}", %{args: [@id, _repo]} = context do
     save(context, %{"repositories" => []})
   end
@@ -1016,9 +1058,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "{int} members left unresolved review comments on \#{int}",
        %{args: [count, number]} = context do
+    # A body long enough that 31 of them exceed the ~12 KB comments budget, so the
+    # scenario still exercises the drop instead of fitting comfortably under it.
     Enum.reduce(1..count, context, fn i, context ->
-      review_comment(context, number, "octocat", "MEMBER", "Note #{i}.")
+      review_comment(
+        context,
+        number,
+        "octocat",
+        "MEMBER",
+        "Note #{i}. " <> String.duplicate("x", 500)
+      )
     end)
+  end
+
+  step "a member replied {string} to the open thread on \#{int}",
+       %{args: [body, number]} = context do
+    review_reply(context, number, "octocat", "MEMBER", body)
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
@@ -1127,6 +1182,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # Claude in a sandbox reviews on the MC's API key for Anthropic, which only its
   # sandbox's provider gets.
+  # A posted body without the marker the plugin appends to recognise its own reviews
+  # and threads (`marker/1`).
+  defp unmarked(body), do: String.replace(body, @marker, "") |> String.trim_trailing()
+
   defp claude(context, settings) do
     World.put_env("ANTHROPIC_API_KEY", "sk-test-anthropic")
     save(context, Map.put(settings, "provider", World.instance("Claude")))
@@ -1623,9 +1682,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert {:ok, _} = context.reply
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
-    # The marker code review finds its own reviews by is the one HTML it writes.
-    body = String.replace(review["body"], ~r/<!-- hal-c2-code-review:[^>]* -->/, "")
-    text = Enum.join([body | Enum.map(review["comments"], & &1["body"])], "\n")
+    # The marker code review finds its own reviews and findings by is the one HTML it
+    # writes; anything else the agent wrote must come out escaped.
+    bodies = [review["body"] | Enum.map(review["comments"], & &1["body"])]
+    text = Enum.map_join(bodies, "\n", &unmarked/1)
     refute text =~ ~r/(^|[^\w])@[\w-]/u
     refute text =~ "!["
     refute text =~ ~r/<[A-Za-z!\/?]/
@@ -1919,7 +1979,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => body}] = review["comments"]
-    assert body == "🔵 **Low:**\n\n**Order:** This always allows."
+    assert body =~ @marker
+    assert unmarked(body) == "🔵 **Low:**\n\n**Order:** This always allows."
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
@@ -2193,7 +2254,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert review["event"] == "REQUEST_CHANGES"
-    assert Enum.map(review["comments"], & &1["body"]) == ["Finding 2.", "Finding 3."]
+    assert Enum.map(review["comments"], &unmarked(&1["body"])) == ["Finding 2.", "Finding 3."]
     context
   end
 
@@ -3666,6 +3727,67 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     }
 
     threads = threads ++ [thread]
+
+    view = %{
+      "author" => %{"login" => "octocat"},
+      "comments" => [],
+      "reviews" => [],
+      "commits" => []
+    }
+
+    answer = %{
+      "data" => %{
+        "viewer" => %{"login" => "monalisa"},
+        "repository" => %{
+          "pullRequest" => %{
+            "reviewThreads" => %{"pageInfo" => %{"hasNextPage" => false}, "nodes" => threads},
+            "author" => %{"__typename" => "User", "login" => "octocat", "avatarUrl" => nil},
+            "reactionGroups" => [],
+            "comments" => %{"nodes" => []},
+            "reviews" => %{"nodes" => []},
+            "reviewRequests" => %{"nodes" => []},
+            "latestReviews" => %{"nodes" => []},
+            "reviewDismissals" => %{"nodes" => []},
+            "commits" => %{"nodes" => []}
+          }
+        }
+      }
+    }
+
+    context
+    |> World.cli_rules([
+      %{"args" => ["pr view #{number}", "author,comments,reviews,commits"], "stdout" => view},
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["reviewThreads(first", "viewerDidAuthor", ~s("number":#{number},)],
+        "stdout" => answer
+      }
+    ])
+    |> Map.update(:review_threads, %{number => threads}, &Map.put(&1, number, threads))
+  end
+
+  # Appends a reply to the most recently added thread on #`number`, keeping its id,
+  # so a scenario can exercise a thread rendered with more than one comment.
+  defp review_reply(context, number, login, association, body) do
+    threads = Map.get(context[:review_threads] || %{}, number, [])
+    {leading, [thread]} = Enum.split(threads, length(threads) - 1)
+    n = length(threads)
+
+    reply = %{
+      "id" => "RC#{n}R",
+      "author" => %{"__typename" => "User", "login" => login, "avatarUrl" => nil},
+      "authorAssociation" => association,
+      "body" => body,
+      "createdAt" => "2026-09-03T12:30:00Z",
+      "url" => "https://github.com/acme/api/pull/#{number}#discussion_r#{n}R",
+      "reactionGroups" => []
+    }
+
+    thread =
+      update_in(thread, ["comments", "nodes"], &(&1 ++ [reply]))
+      |> update_in(["comments", "totalCount"], &(&1 + 1))
+
+    threads = leading ++ [thread]
 
     view = %{
       "author" => %{"login" => "octocat"},

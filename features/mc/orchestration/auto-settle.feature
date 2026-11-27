@@ -15,6 +15,7 @@
 #   docs/user/thread-sidebar.md
 #   https://github.com/pingdotgg/t3code/pull/15355
 #   https://github.com/pingdotgg/t3code/pull/15388
+#   https://github.com/pingdotgg/t3code/pull/22202
 Feature: Threads settle on their own
   A thread that is done, because its pull request merged or closed or because
   nobody has touched it for days, settles itself. Anything that shows the thread
@@ -151,12 +152,22 @@ Feature: Threads settle on their own
       | received a message less than two minutes ago     |
       | is snoozed and has not woken since               |
 
+  # Upstream #22202: only a failure wakes a snoozed thread early. A run that finished is the
+  # agent working on, so the snooze still holds.
   @mc
-  Scenario: A snoozed thread that woke because a turn completed after the snooze can settle
-    Given thread "t1" was snoozed and a turn completed after the snooze
+  Scenario: A snoozed thread that woke because a run failed after the snooze can settle
+    Given thread "t1" was snoozed and a run failed after the snooze
     And its linked pull request merged after that
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
+
+  # Upstream #22202
+  @mc
+  Scenario: A run that finished after the snooze does not wake a snoozed thread for settling
+    Given thread "t1" was snoozed and a turn completed after the snooze
+    And its linked pull request merged after that
+    When the MC sweeps for threads to settle
+    Then thread "t1" is still snoozed and not settled
 
   # Upstream #17789: interrupted runs woke a snoozed thread for settling.
   @mc

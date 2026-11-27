@@ -387,6 +387,12 @@ ColumnLayout {
             description: qsTr("Review a pull request again when its head changes after a review.")
         }
 
+        Toggle {
+            key: "reviewRebases"
+            title: qsTr("Review rebases")
+            description: qsTr("Review a new push again even when it only rebases the change already reviewed.")
+        }
+
         SettingsField {
             title: qsTr("Trusted logins")
             description: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
