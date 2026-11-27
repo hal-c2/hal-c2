@@ -955,7 +955,7 @@ Feature: Moving a thread and its agent to another machine
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then no other user of "laptop" can read the file
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: The user is told what an export contained
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then the user is told the thread's title and id, the file's path, and how many events, attachments and terminal logs it holds

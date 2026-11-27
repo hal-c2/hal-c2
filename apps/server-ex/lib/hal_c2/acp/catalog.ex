@@ -29,6 +29,12 @@ defmodule HalC2.Acp.Catalog do
   @install_timeout 20 * 60 * 1000
   @id ~r/^[a-z0-9][a-z0-9._-]{0,127}$/
   @version ~r/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/
+  # Registry agents that twin a provider HAL-C2 carries itself (upstream
+  # #25753): search never offers them, since the built-in provider is the one
+  # to add. Naming one by hand still installs it, and an instance already
+  # added from it keeps working: only `search/1` leaves them out.
+  @own_registry_ids ~w(codex-acp claude-acp cursor grok-build opencode
+                       opencode-v2 pi-acp antigravity-acp)
 
   # --- RPCs ------------------------------------------------------------------------
 
@@ -44,6 +50,7 @@ defmodule HalC2.Acp.Catalog do
 
       found =
         for agent <- agents,
+            agent["id"] not in @own_registry_ids,
             dist = distribution(agent, "auto"),
             runner_available?(dist, runners),
             rank = rank(agent, query),

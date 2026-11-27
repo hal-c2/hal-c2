@@ -147,7 +147,7 @@ Feature: Thread titles
 
   # Upstream #29606: the title writer was started in the removed worktree and failed as if
   # Codex were not installed, so the title never changed.
-  @backlog @mc
+  @mc
   Scenario: Regenerating the title of a thread whose worktree was cleaned up
     Given "Fix login" has a conversation about rate limiting
     And its worktree was removed by storage cleanup

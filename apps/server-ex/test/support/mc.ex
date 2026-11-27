@@ -37,6 +37,10 @@ defmodule HalC2.Test.Mc do
       :ok = HalC2.Application.prepare_files(Keyword.get(opts, :migration, []))
     end
 
+    # A release's start readies its directories (`prepare_files/0`); a test MC
+    # in one directory does the same for its own, without the migration.
+    if is_binary(spec), do: HalC2.Paths.ensure!()
+
     store = HalC2.Store.home_path()
     start_supervised!({HalC2.Store, path: store})
     start_supervised!(HalC2.Auth)
